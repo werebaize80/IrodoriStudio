@@ -1,0 +1,4 @@
+IrodoriStudio application code
+
+Copyright notice for the application is maintained by the application distributor.
+This file does not replace the upstream licenses listed in THIRD_PARTY_NOTICES.txt.

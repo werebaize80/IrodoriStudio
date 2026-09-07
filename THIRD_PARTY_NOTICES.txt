@@ -1,0 +1,19 @@
+IrodoriStudio Third-Party Notices
+
+IrodoriStudioは、ローカル音声生成のためにIrodori-TTSおよびIrodori-TTS-Serverを利用します。
+licenses/Irodori-TTS-LICENSE.txt と licenses/Irodori-TTS-Server-LICENSE.txt は、開発時に確認したupstream LICENSE本文のコピーです。
+このファイルはライセンス本文の代替ではありません。モデルやPython依存パッケージを追加取得する場合は、取得したrevisionの利用条件も確認してください。
+
+開発時に確認したソースrevision:
+- Irodori-TTS: 8224dafb46d0aba89209a8f905f1cb7e3299d9c1
+- Irodori-TTS-Server: 841fb7c6ec57729c56b9b75c0ef2562249b13a10
+
+主な配布元:
+- https://github.com/Aratako/Irodori-TTS
+- https://github.com/Aratako/Irodori-TTS-Server
+- https://huggingface.co/Aratako/Irodori-TTS-v4.1-Small
+- https://huggingface.co/Aratako/Irodori-TTS-v4.1-Small-Quantized
+- https://huggingface.co/Aratako/Semantic-DACVAE-Japanese-32dim
+- https://github.com/SesameAILabs/silentcipher
+
+アプリの初回セットアップが取得したrevision、取得元、同梱有無は設定・ログへ記録します。

@@ -1,0 +1,28 @@
+[package]
+name = "irodori_studio"
+version = "0.1.0"
+description = "Portable local voice generation studio for Irodori-TTS"
+authors = ["IrodoriStudio"]
+edition = "2021"
+
+[lib]
+name = "irodori_studio_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "IrodoriStudio"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+base64 = "0.22"
+uuid = { version = "1", features = ["v4"] }
+zip = "2"
