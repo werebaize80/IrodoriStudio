@@ -48,6 +48,8 @@ textarea:focus, input:focus, select:focus { border-color: var(--accent); box-sha
 .surface { background: linear-gradient(145deg, rgba(21,28,40,.97), rgba(15,20,29,.97)); border: 1px solid rgba(255,255,255,.07); border-radius: 18px; box-shadow: var(--shadow); }
 .card-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
 .card-heading h2, .page-intro h2 { margin: 7px 0 0; font-size: 18px; letter-spacing: -.035em; }
+.composer-card .card-heading > div:first-child { min-width: 0; }
+.composer-card .card-heading h2::after { content: "改行毎にボイス生成。20秒以上で変なボイス生成された場合、改行挟むと改善されるかも"; display: inline; margin-left: 12px; color: #707b8d; font-size: 11px; font-weight: 400; letter-spacing: 0; line-height: 1.5; }
 .page-intro p { max-width: 740px; margin: 9px 0 0; color: var(--muted); font-size: 12px; line-height: 1.7; }
 .button { min-height: 40px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 0 16px; border-radius: 10px; font-size: 12px; font-weight: 700; transition: transform .2s, background .2s; }
 .button:hover:not(:disabled) { transform: translateY(-1px); }
@@ -190,6 +192,37 @@ textarea:focus, input:focus, select:focus { border-color: var(--accent); box-sha
 .model-choice b { font-size: 12px; }
 .model-choice small { margin-top: 5px; color: var(--muted); font-size: 9px; }
 .model-choice em { max-width: 76px; color: var(--dim); font-size: 8px; font-style: normal; line-height: 1.4; text-align: right; }
+.model-select-label { margin: 20px 0; }
+.model-select { width: 100%; margin-top: 7px; padding: 13px 14px; color: #e2e7f2; background: #101620; border: 1px solid #34425a; border-radius: 10px; font-size: 12px; }
+.model-variant-area { margin: -8px 0 20px; padding: 12px 14px; background: #101620; border: 1px solid #293447; border-radius: 10px; }
+.model-variant-label { display: block; margin-bottom: 8px; color: #aeb9ca; font-size: 10px; font-weight: 700; }
+.model-variant-switch { display: flex; gap: 7px; }
+.model-variant-switch button { flex: 1; padding: 9px 11px; color: #aeb9ca; background: #0c121b; border: 1px solid #34425a; border-radius: 8px; font-size: 11px; }
+.model-variant-switch button b, .model-variant-switch button small { display: block; }
+.model-variant-switch button small { margin-top: 3px; color: #7f8da3; font-size: 9px; }
+.model-variant-switch button.needs-install { border-style: dashed; border-color: #846b42; }
+.model-variant-switch button.needs-install small { color: #d4ae71; }
+.model-variant-switch button:disabled { cursor: wait; opacity: .7; }
+.model-variant-switch button.selected { color: #17202d; background: linear-gradient(135deg, #b8c1ff, #b5e8d4); border-color: transparent; }
+.model-variant-switch button.selected small { color: #364152; }
+.model-not-installed { display: block; margin-top: 8px; color: #d4ae71; font-size: 9px; line-height: 1.5; }
+.model-download-box { margin: 20px 0; padding: 16px; background: #101620; border: 1px solid #293447; border-radius: 12px; }
+.model-download-box .card-heading { margin-bottom: 13px; }
+.model-download-box h3 { margin: 4px 0 0; font-size: 14px; }
+.model-download-hint { color: var(--muted); font-size: 9px; }
+.model-search-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 7px; }
+.model-search-row input { min-width: 0; padding: 11px 12px; color: #e2e7f2; background: #0c121b; border: 1px solid #34425a; border-radius: 8px; font-size: 11px; }
+.model-search-results { display: grid; gap: 5px; max-height: 155px; margin-top: 8px; overflow: auto; }
+.model-search-results button { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 10px; color: #ccd5e4; background: #0d141e; border: 1px solid #243147; border-radius: 7px; text-align: left; }
+.model-search-results button:hover { border-color: var(--accent); }
+.model-search-results b { overflow: hidden; font: 10px "DM Mono", monospace; text-overflow: ellipsis; white-space: nowrap; }
+.model-search-results small { flex: 0 0 auto; color: var(--muted); font-size: 9px; }
+.model-progress { margin-top: 14px; padding-top: 12px; border-top: 1px solid #253044; }
+.model-progress-heading { display: flex; justify-content: space-between; align-items: center; font-size: 10px; }
+.model-progress-heading strong { color: var(--good); font: 12px "DM Mono", monospace; }
+.progress-track { height: 8px; margin: 8px 0 6px; overflow: hidden; background: #202a39; border-radius: 99px; }
+.progress-track span { display: block; height: 100%; min-width: 2px; background: linear-gradient(90deg, #9caaff, #a8e6ca); border-radius: inherit; transition: width .15s ease-out; }
+.model-progress small { display: block; overflow: hidden; color: var(--muted); font: 9px "DM Mono", monospace; text-overflow: ellipsis; white-space: nowrap; }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 13px; margin: 20px 0; }
 .checkbox-field { display: flex; grid-column: 1/-1; align-items: center; gap: 8px; }
 .checkbox-field input { width: 15px; height: 15px; }

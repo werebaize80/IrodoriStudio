@@ -4,11 +4,12 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use std::env;
 use std::fs::{self, File, OpenOptions};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tauri::{Manager, RunEvent, State};
+use tauri::{AppHandle, Emitter, Manager, RunEvent, State};
 use uuid::Uuid;
 
 #[cfg(target_os = "windows")]
@@ -16,9 +17,20 @@ use std::os::windows::process::CommandExt;
 
 const NOTICE_VERSION: &str = "2026-09-04-v1";
 const CREATE_NO_WINDOW: u32 = 0x08000000;
-const SERVER_START_TIMEOUT: Duration = Duration::from_secs(30);
+// Originalモデルは初回読み込みに時間がかかるため、短い監視時間で
+// 起動中のサーバーを終了させない。build_server_commandのモデル読み込み上限と合わせる。
+const SERVER_START_TIMEOUT: Duration = Duration::from_secs(900);
+const UV_VERSION: &str = "0.12.9";
+const IRODORI_TTS_REVISION: &str = "8224dafb46d0aba89209a8f905f1cb7e3299d9c1";
+const IRODORI_SERVER_REVISION: &str = "841fb7c6ec57729c56b9b75c0ef2562249b13a10";
+const SILENTCIPHER_REVISION: &str = "d46d7d0893a583d8968ab3a6626e2289faec9152";
+const DACVAE_REVISION: &str = "414c20785fc3a28373073ea8ef7a1316eeeaca6e";
+const ORIGINAL_MODEL_REVISION: &str = "2b28324dc263ed5e6638b3cf3dd94c82ead07b4b";
+const QUANTIZED_MODEL_REVISION: &str = "ef04e6c3ba56138ae23e86a2eabc004f76990e37";
+const ANIME_MODEL: &str = "phasefield-audio/Irodori-TTS-v4.1-Anime";
+const ANIME_QUANTIZED_MODEL: &str = "phasefield-audio/Irodori-TTS-v4.1-Anime/int8-weight-only";
 const FFMPEG_DOWNLOAD_URLS: [&str; 2] = [
-    "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip",
+    "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-06-13-06/ffmpeg-N-126435-gf93cd72dde-win64-gpl.zip",
     "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip",
 ];
 
@@ -197,6 +209,35 @@ struct InstallResult {
     path: String,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct HuggingFaceModel {
+    id: String,
+    #[serde(default)]
+    downloads: Option<u64>,
+    #[serde(default)]
+    likes: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct HuggingFaceTreeEntry {
+    path: String,
+    #[serde(rename = "type")]
+    entry_type: String,
+    #[serde(default)]
+    size: Option<u64>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct ModelInstallProgress {
+    model: String,
+    file: String,
+    percent: f64,
+    downloaded_bytes: u64,
+    total_bytes: u64,
+}
+
 #[derive(Debug, PartialEq, Eq)]
 struct HfCheckpointSource {
     repo_id: String,
@@ -323,8 +364,49 @@ fn save_json<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
     }
     let temp = path.with_extension("tmp");
     let text = serde_json::to_string_pretty(value).map_err(|error| error.to_string())?;
-    fs::write(&temp, text).map_err(|error| error.to_string())?;
-    fs::rename(&temp, path).map_err(|error| error.to_string())
+    let _ = fs::remove_file(&temp);
+    if let Err(error) = fs::write(&temp, text) {
+        let _ = fs::remove_file(&temp);
+        return Err(error.to_string());
+    }
+    let result = replace_file(&temp, path).map_err(|error| error.to_string());
+    if result.is_err() {
+        let _ = fs::remove_file(&temp);
+    }
+    result
+}
+
+fn replace_file(temp: &Path, destination: &Path) -> std::io::Result<()> {
+    #[cfg(target_os = "windows")]
+    {
+        if destination.is_file() {
+            let backup = destination.with_extension("bak");
+            let _ = fs::remove_file(&backup);
+            fs::rename(destination, &backup)?;
+            match fs::rename(temp, destination) {
+                Ok(()) => {
+                    let _ = fs::remove_file(&backup);
+                    Ok(())
+                }
+                Err(error) => {
+                    let _ = fs::rename(&backup, destination);
+                    Err(error)
+                }
+            }
+        } else {
+            fs::rename(temp, destination)
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        fs::rename(temp, destination)
+    }
+}
+
+fn remove_created_files(files: &[PathBuf]) {
+    for path in files {
+        let _ = fs::remove_file(path);
+    }
 }
 
 fn iso_now() -> String {
@@ -618,7 +700,7 @@ fn default_tts_config() -> Result<TtsConfig, String> {
         server_url: "http://127.0.0.1".to_string(),
         port: 8088,
         api_key: String::new(),
-        model: "Aratako/Irodori-TTS-v4.1-Small-Quantized/int8-weight-only".to_string(),
+        model: ANIME_QUANTIZED_MODEL.to_string(),
         model_revision: "main".to_string(),
         default_voice: "none".to_string(),
         speed: 1.0,
@@ -637,11 +719,39 @@ fn default_tts_config() -> Result<TtsConfig, String> {
     })
 }
 
+fn model_revision_for(model: &str) -> Option<&'static str> {
+    if model == ANIME_MODEL || model == ANIME_QUANTIZED_MODEL {
+        Some("main")
+    } else if model == "Aratako/Irodori-TTS-v4.1-Small-Quantized/int8-weight-only" {
+        Some(QUANTIZED_MODEL_REVISION)
+    } else if model == "Aratako/Irodori-TTS-v4.1-Small" {
+        Some(ORIGINAL_MODEL_REVISION)
+    } else {
+        None
+    }
+}
+
+fn normalize_model_revision(config: &mut TtsConfig) -> bool {
+    let Some(revision) = model_revision_for(&config.model) else {
+        return false;
+    };
+    if matches!(
+        config.model_revision.trim(),
+        "" | "main" | ORIGINAL_MODEL_REVISION | QUANTIZED_MODEL_REVISION
+    ) && config.model_revision != revision
+    {
+        config.model_revision = revision.to_string();
+        return true;
+    }
+    false
+}
+
 fn read_tts_config(paths: &PortablePaths) -> Result<TtsConfig, String> {
     let mut config = load_json(&json_path(paths, "settings.json"))
         .and_then(|value| value.map_or_else(default_tts_config, Ok))?;
     let root = PathBuf::from(&paths.root);
     let mut changed = rebase_portable_config_paths(&mut config, &root);
+    changed |= normalize_model_revision(&mut config);
     let configured = PathBuf::from(&config.python_path);
     let portable_env = root.join("runtime").join("env");
     if configured.is_file() && path_is_within(&configured, &portable_env) {
@@ -1183,6 +1293,7 @@ fn status_for(runtime: &RuntimeState, paths: &PortablePaths, config: &TtsConfig)
         let _ = fs::remove_file(managed_marker(paths));
     }
     let running = owned_pid.is_some() || healthy;
+    let watermark_disabled = watermark_warning(paths);
     TtsStatus {
         healthy,
         running,
@@ -1191,9 +1302,13 @@ fn status_for(runtime: &RuntimeState, paths: &PortablePaths, config: &TtsConfig)
         port: config.port,
         model_loaded,
         message: if healthy && model_loaded {
-            "利用可能".to_string()
+            if watermark_disabled {
+                "利用可能。ただし音声識別用のウォーターマークが無効です。Windowsの開発者モードを確認してください。".to_string()
+            } else {
+                "利用可能".to_string()
+            }
         } else if healthy {
-            "サーバー接続済み。音声モデルを準備しています".to_string()
+            "音声モデルの選択待機中".to_string()
         } else if startup_timed_out {
             "サーバーの起動に時間がかかっています。ログを確認してもう一度お試しください".to_string()
         } else if running {
@@ -1220,6 +1335,30 @@ fn server_log_tail(paths: &PortablePaths) -> String {
     let mut lines = contents.lines().rev().take(12).collect::<Vec<_>>();
     lines.reverse();
     lines.join("\n")
+}
+
+fn server_diagnostic(paths: &PortablePaths, config: &TtsConfig) -> String {
+    let mut detail = format!(
+        "接続先: {}/v1/audio/speech\nモデル: {}\nモデルrevision: {}\nモデルの機器: {}\nモデルの精度: {}\n音声データの機器: {}\n音声データの精度: {}",
+        server_base_url(config),
+        config.model,
+        config.model_revision,
+        config.model_device,
+        config.model_precision,
+        config.codec_device,
+        config.codec_precision,
+    );
+    let log = server_log_tail(paths);
+    if !log.is_empty() {
+        detail.push_str("\n\nサーバーログ（末尾12行）:\n");
+        detail.push_str(&log);
+    }
+    detail
+}
+
+fn watermark_warning(paths: &PortablePaths) -> bool {
+    let log = server_log_tail(paths).to_ascii_lowercase();
+    log.contains("winerror 1314") || log.contains("will not be watermarked")
 }
 
 fn build_server_command(
@@ -1307,7 +1446,10 @@ fn build_server_command(
     }
     command.env("IRODORI_HOST", "127.0.0.1");
     command.env("IRODORI_PORT", config.port.to_string());
-    command.env("IRODORI_HF_CHECKPOINT", &config.model);
+    let checkpoint = installed_model_checkpoint(&root, &config.model)
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or_else(|| config.model.clone());
+    command.env("IRODORI_HF_CHECKPOINT", checkpoint);
     command.env("IRODORI_VOICES_DIR", &config.voices_dir);
     command.env("IRODORI_ALLOW_NO_REF_VOICE", "true");
     command.env("IRODORI_MODEL_DEVICE", &config.model_device);
@@ -1499,6 +1641,8 @@ fn save_voice(
     let paths = ensure_directories()?;
     let voices_dir = PathBuf::from(&paths.voices);
     let mut voices = load_voices(&paths)?;
+    let previous_voices = voices.clone();
+    let mut created_files = Vec::new();
     let id = voice
         .id
         .unwrap_or_else(|| format!("voice-{}", &Uuid::new_v4().to_string()[..8]));
@@ -1515,9 +1659,26 @@ fn save_voice(
         })
         .collect::<Vec<_>>();
     for upload in uploads {
-        let filename = format!("{}-{}", id, safe_file_name(&upload.name));
+        let filename = format!(
+            "{}-{}-{}",
+            id,
+            &Uuid::new_v4().to_string()[..8],
+            safe_file_name(&upload.name)
+        );
         let path = voices_dir.join(filename);
-        fs::write(&path, decode_audio(&upload.data)?).map_err(|error| error.to_string())?;
+        let bytes = match decode_audio(&upload.data) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                remove_created_files(&created_files);
+                return Err(error);
+            }
+        };
+        if let Err(error) = fs::write(&path, bytes) {
+            let _ = fs::remove_file(&path);
+            remove_created_files(&created_files);
+            return Err(error.to_string());
+        }
+        created_files.push(path.clone());
         references.push(
             path.file_name()
                 .and_then(|name| name.to_str())
@@ -1529,30 +1690,44 @@ fn save_voice(
         .icon_path
         .map(|path| normalize_voice_file_reference(&path, &voices_dir).unwrap_or(path));
     if let Some(upload) = icon {
-        let (_, extension) = image_format(&upload.name).ok_or_else(|| {
-            "アイコン画像はPNG、JPG、WEBP、GIF、BMPのいずれかを選択してください。".to_string()
-        })?;
-        let bytes = BASE64
-            .decode(&upload.data)
-            .map_err(|error| format!("アイコン画像を読み込めません: {error}"))?;
+        let (_, extension) = match image_format(&upload.name) {
+            Some(format) => format,
+            None => {
+                remove_created_files(&created_files);
+                return Err(
+                    "アイコン画像はPNG、JPG、WEBP、GIF、BMPのいずれかを選択してください。"
+                        .to_string(),
+                );
+            }
+        };
+        let bytes = match BASE64.decode(&upload.data) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                remove_created_files(&created_files);
+                return Err(format!("アイコン画像を読み込めません: {error}"));
+            }
+        };
         if bytes.is_empty() || bytes.len() > MAX_VOICE_ICON_BYTES {
+            remove_created_files(&created_files);
             return Err("アイコン画像は5MB以下にしてください。".to_string());
         }
-        let path = voices_dir.join(format!("{id}-icon.{extension}"));
-        fs::write(&path, bytes).map_err(|error| error.to_string())?;
+        let path = voices_dir.join(format!(
+            "{id}-icon-{}.{}",
+            &Uuid::new_v4().to_string()[..8],
+            extension
+        ));
+        if let Err(error) = fs::write(&path, bytes) {
+            let _ = fs::remove_file(&path);
+            remove_created_files(&created_files);
+            return Err(error.to_string());
+        }
+        created_files.push(path.clone());
         icon_path = Some(
             path.file_name()
                 .and_then(|name| name.to_str())
                 .unwrap_or("icon.png")
                 .to_string(),
         );
-        if let Some(previous) = previous_icon {
-            if let Some(previous_path) = resolve_voice_file(&previous, &voices_dir) {
-                if previous_path != path {
-                    let _ = fs::remove_file(previous_path);
-                }
-            }
-        }
     }
     let saved = Voice {
         id: id.clone(),
@@ -1571,8 +1746,27 @@ fn save_voice(
     } else {
         voices.push(saved.clone());
     }
-    save_voice_catalog(&voices_dir, &voices)?;
-    write_voice_aliases(&voices_dir, &voices)?;
+    if let Err(error) = save_voice_catalog(&voices_dir, &voices) {
+        remove_created_files(&created_files);
+        return Err(error);
+    }
+    if let Err(error) = write_voice_aliases(&voices_dir, &voices) {
+        let _ = save_voice_catalog(&voices_dir, &previous_voices);
+        let _ = write_voice_aliases(&voices_dir, &previous_voices);
+        remove_created_files(&created_files);
+        return Err(error);
+    }
+    if let Some(previous) = previous_icon {
+        if let Some(previous_path) = resolve_voice_file(&previous, &voices_dir) {
+            let current_icon = saved
+                .icon_path
+                .as_deref()
+                .and_then(|path| resolve_voice_file(path, &voices_dir));
+            if Some(previous_path.clone()) != current_icon {
+                let _ = fs::remove_file(previous_path);
+            }
+        }
+    }
     Ok(saved)
 }
 
@@ -1608,11 +1802,18 @@ fn get_tts_config() -> Result<TtsConfig, String> {
     read_tts_config(&ensure_directories()?)
 }
 
+#[tauri::command(rename_all = "camelCase")]
+fn list_installed_models() -> Result<Vec<String>, String> {
+    let paths = ensure_directories()?;
+    Ok(installed_model_ids(&PathBuf::from(paths.root)))
+}
+
 #[tauri::command]
-fn save_tts_config(config: TtsConfig) -> Result<TtsConfig, String> {
+fn save_tts_config(mut config: TtsConfig) -> Result<TtsConfig, String> {
     if config.port == 0 || config.server_url.trim().is_empty() {
         return Err("サーバーのURLとポート番号を確認してください。".to_string());
     }
+    normalize_model_revision(&mut config);
     let paths = ensure_directories()?;
     save_json(&json_path(&paths, "settings.json"), &config)?;
     Ok(config)
@@ -1734,9 +1935,10 @@ fn generate_speech_sync(
     let config = read_tts_config(&paths)?;
     let (healthy, _) = health(&config);
     if !healthy {
-        return Err(
-            "音声生成サーバーが起動していません。設定画面から起動してください。".to_string(),
-        );
+        return Err(format!(
+            "音声生成サーバーに接続できません。設定画面でサーバーの状態を確認してください。\n\n{}",
+            server_diagnostic(&paths, &config)
+        ));
     }
     let voices = load_voices(&paths)?;
     let selected = voice_id
@@ -1766,16 +1968,28 @@ fn generate_speech_sync(
     if !config.api_key.is_empty() {
         request = request.bearer_auth(&config.api_key);
     }
-    let response = request
-        .send()
-        .map_err(|error| format!("Serverへ接続できない: {error}"))?;
+    let response = request.send().map_err(|error| {
+        format!(
+            "Serverへ接続できない: {error}\n\n{}",
+            server_diagnostic(&paths, &config)
+        )
+    })?;
     let status = response.status();
     let bytes = response
         .bytes()
         .map_err(|error| error.to_string())?
         .to_vec();
     if !status.is_success() {
-        return Err(String::from_utf8_lossy(&bytes).to_string());
+        let server_message = String::from_utf8_lossy(&bytes);
+        return Err(format!(
+            "{}\n\n{}",
+            if server_message.trim().is_empty() {
+                "サーバーが音声生成に失敗しました。"
+            } else {
+                server_message.trim()
+            },
+            server_diagnostic(&paths, &config)
+        ));
     }
     let id = Uuid::new_v4().to_string();
     let path = PathBuf::from(&paths.temp).join(format!("{id}.wav"));
@@ -1956,6 +2170,224 @@ fn bundled_uv(root: &Path) -> Option<PathBuf> {
     path.is_file().then_some(path)
 }
 
+fn model_destination(root: &Path, model: &str) -> PathBuf {
+    root.join("models").join(model.replace(['/', '\\'], "__"))
+}
+
+fn installed_model_checkpoint(root: &Path, model: &str) -> Option<PathBuf> {
+    let source = split_hf_checkpoint_source(model).ok()?;
+    let destination = model_destination(root, model);
+    let checkpoint = source
+        .subfolder
+        .as_deref()
+        .map(|folder| destination.join(folder))
+        .unwrap_or(destination);
+    checkpoint
+        .join("model.safetensors")
+        .is_file()
+        .then_some(checkpoint)
+}
+
+fn installed_model_ids(root: &Path) -> Vec<String> {
+    let models = root.join("models");
+    let mut installed = fs::read_dir(models)
+        .ok()
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|entry| {
+            let path = entry.path();
+            if !path.is_dir()
+                || path.file_name().and_then(|name| name.to_str()) == Some("hf-cache")
+                || find_file_recursive(&path, "model.safetensors").is_none()
+            {
+                return None;
+            }
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .map(|name| name.replace("__", "/"))
+        })
+        .collect::<Vec<_>>();
+    installed.sort();
+    installed.dedup();
+    installed
+}
+
+fn emit_model_progress(app: Option<&AppHandle>, progress: ModelInstallProgress) {
+    if let Some(app) = app {
+        let _ = app.emit("model-install-progress", progress);
+    }
+}
+
+fn install_huggingface_model(
+    root: &Path,
+    model: &str,
+    revision: &str,
+    app: Option<&AppHandle>,
+) -> Result<InstallResult, String> {
+    let checkpoint = split_hf_checkpoint_source(model)?;
+    let revision = if revision.trim().is_empty() {
+        "main"
+    } else {
+        revision.trim()
+    };
+    let client = Client::builder()
+        .user_agent("IrodoriStudio/0.1")
+        .connect_timeout(Duration::from_secs(30))
+        .timeout(Duration::from_secs(900))
+        .build()
+        .map_err(|error| error.to_string())?;
+    let tree_url = format!(
+        "https://huggingface.co/api/models/{}/tree/{}",
+        checkpoint.repo_id, revision
+    );
+    let entries = client
+        .get(tree_url)
+        .query(&[("recursive", "true"), ("expand", "false")])
+        .send()
+        .map_err(|error| format!("Hugging Faceのモデル一覧を取得できません: {error}"))?
+        .error_for_status()
+        .map_err(|error| format!("Hugging Faceのモデル一覧を取得できません: {error}"))?
+        .json::<Vec<HuggingFaceTreeEntry>>()
+        .map_err(|error| format!("Hugging Faceのモデル一覧を読み込めません: {error}"))?;
+
+    let checkpoint_path = checkpoint
+        .subfolder
+        .as_deref()
+        .map(|folder| format!("{folder}/model.safetensors"))
+        .unwrap_or_else(|| "model.safetensors".to_string());
+    let mut files = entries
+        .into_iter()
+        .filter(|entry| entry.entry_type == "file")
+        .filter(|entry| {
+            entry.path == checkpoint_path
+                || (entry.path.starts_with("tokenizer/")
+                    && entry.path != "tokenizer/"
+                    && !entry.path.ends_with('/'))
+                || checkpoint
+                    .subfolder
+                    .as_deref()
+                    .is_some_and(|folder| entry.path.starts_with(&format!("{folder}/tokenizer/")))
+        })
+        .collect::<Vec<_>>();
+    files.sort_by(|left, right| left.path.cmp(&right.path));
+    if !files.iter().any(|entry| entry.path == checkpoint_path) {
+        return Err(format!(
+            "モデルに model.safetensors が見つかりません: {model}"
+        ));
+    }
+
+    let total_bytes = files.iter().filter_map(|entry| entry.size).sum::<u64>();
+    let destination = model_destination(root, model);
+    fs::create_dir_all(&destination).map_err(|error| error.to_string())?;
+    let mut completed_bytes = 0_u64;
+    for entry in files {
+        let target = destination.join(&entry.path);
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        }
+        let expected_size = entry.size.unwrap_or(0);
+        if target.is_file()
+            && (expected_size == 0
+                || target.metadata().map(|meta| meta.len()).unwrap_or(0) == expected_size)
+        {
+            completed_bytes = completed_bytes.saturating_add(expected_size);
+            emit_model_progress(
+                app,
+                ModelInstallProgress {
+                    model: model.to_string(),
+                    file: entry.path,
+                    percent: if total_bytes == 0 {
+                        0.0
+                    } else {
+                        completed_bytes as f64 * 100.0 / total_bytes as f64
+                    },
+                    downloaded_bytes: completed_bytes,
+                    total_bytes,
+                },
+            );
+            continue;
+        }
+
+        let url = format!(
+            "https://huggingface.co/{}/resolve/{}/{}",
+            checkpoint.repo_id, revision, entry.path
+        );
+        let mut response = client
+            .get(url)
+            .send()
+            .map_err(|error| format!("モデルのダウンロードに失敗しました: {error}"))?
+            .error_for_status()
+            .map_err(|error| format!("モデルのダウンロードに失敗しました: {error}"))?;
+        let response_size = response.content_length().unwrap_or(expected_size);
+        let partial = target.with_extension("part");
+        let mut file = File::create(&partial).map_err(|error| error.to_string())?;
+        let mut downloaded_file = 0_u64;
+        let mut buffer = [0_u8; 1024 * 1024];
+        loop {
+            let read = response
+                .read(&mut buffer)
+                .map_err(|error| format!("モデルの保存に失敗しました: {error}"))?;
+            if read == 0 {
+                break;
+            }
+            std::io::Write::write_all(&mut file, &buffer[..read])
+                .map_err(|error| format!("モデルの保存に失敗しました: {error}"))?;
+            downloaded_file = downloaded_file.saturating_add(read as u64);
+            let current = completed_bytes.saturating_add(downloaded_file);
+            emit_model_progress(
+                app,
+                ModelInstallProgress {
+                    model: model.to_string(),
+                    file: entry.path.clone(),
+                    percent: if total_bytes == 0 {
+                        0.0
+                    } else {
+                        current as f64 * 100.0 / total_bytes as f64
+                    },
+                    downloaded_bytes: current,
+                    total_bytes,
+                },
+            );
+        }
+        drop(file);
+        if expected_size > 0 && downloaded_file != expected_size && response_size != downloaded_file
+        {
+            let _ = fs::remove_file(&partial);
+            return Err(format!(
+                "モデルファイルのサイズが一致しません: {}",
+                entry.path
+            ));
+        }
+        if target.is_file() {
+            fs::remove_file(&target).map_err(|error| error.to_string())?;
+        }
+        fs::rename(&partial, &target).map_err(|error| error.to_string())?;
+        completed_bytes = completed_bytes.saturating_add(downloaded_file);
+    }
+
+    emit_model_progress(
+        app,
+        ModelInstallProgress {
+            model: model.to_string(),
+            file: "完了".to_string(),
+            percent: 100.0,
+            downloaded_bytes: total_bytes,
+            total_bytes,
+        },
+    );
+    Ok(InstallResult {
+        component: "model".to_string(),
+        installed: destination.join("model.safetensors").is_file()
+            || checkpoint
+                .subfolder
+                .as_deref()
+                .is_some_and(|folder| destination.join(folder).join("model.safetensors").is_file()),
+        message: format!("{model} をアプリ内へ保存しました。"),
+        path: destination.to_string_lossy().into_owned(),
+    })
+}
+
 fn download_zip(url: &str, destination: &Path) -> Result<(), String> {
     let client = Client::builder()
         .user_agent("IrodoriStudio/0.1")
@@ -2130,20 +2562,26 @@ fn limit_uv_to_windows(path: &Path) -> Result<(), String> {
 fn prepare_portable_dependency_sources(root: &Path, staging: &Path) -> Result<(), String> {
     let vendor = root.join("vendor");
     fs::create_dir_all(&vendor).map_err(|error| error.to_string())?;
+    let silentcipher_archive = format!("silentcipher-{SILENTCIPHER_REVISION}");
+    let silentcipher_url =
+        format!("https://github.com/SesameAILabs/silentcipher/archive/{SILENTCIPHER_REVISION}.zip");
     install_source(
         &vendor,
         &vendor.join("silentcipher"),
         staging,
-        "silentcipher-d46d7d0893a583d8968ab3a6626e2289faec9152",
-        "https://github.com/SesameAILabs/silentcipher/archive/d46d7d0893a583d8968ab3a6626e2289faec9152.zip",
+        &silentcipher_archive,
+        &silentcipher_url,
         "pyproject.toml",
     )?;
+    let dacvae_archive = format!("dacvae-{DACVAE_REVISION}");
+    let dacvae_url =
+        format!("https://github.com/facebookresearch/dacvae/archive/{DACVAE_REVISION}.zip");
     install_source(
         &vendor,
         &vendor.join("dacvae"),
         staging,
-        "dacvae-main",
-        "https://github.com/facebookresearch/dacvae/archive/refs/heads/main.zip",
+        &dacvae_archive,
+        &dacvae_url,
         "setup.py",
     )?;
 
@@ -2168,7 +2606,9 @@ fn prepare_portable_dependency_sources(root: &Path, staging: &Path) -> Result<()
         &irodori_project,
         &[
             (
-                "silentcipher @ git+https://github.com/SesameAILabs/silentcipher.git@d46d7d0893a583d8968ab3a6626e2289faec9152",
+                &format!(
+                    "silentcipher @ git+https://github.com/SesameAILabs/silentcipher.git@{SILENTCIPHER_REVISION}"
+                ),
                 "silentcipher",
             ),
             (
@@ -2185,41 +2625,10 @@ fn prepare_portable_dependency_sources(root: &Path, staging: &Path) -> Result<()
     Ok(())
 }
 
-fn ensure_huggingface_hub(
-    uv: &Path,
-    python: &Path,
-    root: &Path,
-    runtime: &Path,
-) -> Result<(), String> {
-    let environment_python = runtime.join("env").join("Scripts").join("python.exe");
-    let target_python = if environment_python.is_file() {
-        environment_python
-    } else {
-        python.to_path_buf()
-    };
-    let mut command = Command::new(uv);
-    command.args(["pip", "install", "--python"]);
-    command.arg(target_python);
-    command.arg("huggingface-hub>=0.34.0");
-    command.env("UV_PROJECT_ENVIRONMENT", runtime.join("env"));
-    command.env("UV_PYTHON_INSTALL_DIR", runtime.join("python"));
-    command.env("UV_CACHE_DIR", root.join("data").join("uv-cache"));
-    command.env("PYTHONNOUSERSITE", "1");
-    #[cfg(target_os = "windows")]
-    command.creation_flags(CREATE_NO_WINDOW);
-    let output = command
-        .output()
-        .map_err(|error| format!("Hugging Faceの取得部品を準備できませんでした: {error}"))?;
-    if !output.status.success() {
-        let detail = String::from_utf8_lossy(&output.stderr);
-        return Err(format!(
-            "Hugging Faceの取得部品を準備できませんでした。{detail}"
-        ));
-    }
-    Ok(())
-}
-
-fn install_environment_one(component: String) -> Result<InstallResult, String> {
+fn install_environment_one(
+    component: String,
+    app: Option<&AppHandle>,
+) -> Result<InstallResult, String> {
     let paths = ensure_directories()?;
     let root = PathBuf::from(&paths.root);
     let runtime = root.join("runtime");
@@ -2228,7 +2637,10 @@ fn install_environment_one(component: String) -> Result<InstallResult, String> {
     match component.as_str() {
         "runtime" => {
             let archive = staging.join("uv.zip");
-            download_zip("https://github.com/astral-sh/uv/releases/latest/download/uv-x86_64-pc-windows-msvc.zip", &archive)?;
+            let url = format!(
+                "https://github.com/astral-sh/uv/releases/download/{UV_VERSION}/uv-x86_64-pc-windows-msvc.zip"
+            );
+            download_zip(&url, &archive)?;
             extract_zip(&archive, &runtime)?;
             Ok(InstallResult {
                 component,
@@ -2288,20 +2700,28 @@ fn install_environment_one(component: String) -> Result<InstallResult, String> {
         }
         "sources" => {
             let (irodori_source, server_source) = default_roots(&root);
+            let irodori_archive = format!("Irodori-TTS-{IRODORI_TTS_REVISION}");
+            let irodori_url = format!(
+                "https://github.com/Aratako/Irodori-TTS/archive/{IRODORI_TTS_REVISION}.zip"
+            );
             install_source(
                 &irodori_source,
                 &root.join("irodori"),
                 &staging,
-                "Irodori-TTS-main",
-                "https://github.com/Aratako/Irodori-TTS/archive/refs/heads/main.zip",
+                &irodori_archive,
+                &irodori_url,
                 "infer.py",
             )?;
+            let server_archive = format!("Irodori-TTS-Server-{IRODORI_SERVER_REVISION}");
+            let server_url = format!(
+                "https://github.com/Aratako/Irodori-TTS-Server/archive/{IRODORI_SERVER_REVISION}.zip"
+            );
             install_source(
                 &server_source,
                 &root.join("server"),
                 &staging,
-                "Irodori-TTS-Server-main",
-                "https://github.com/Aratako/Irodori-TTS-Server/archive/refs/heads/main.zip",
+                &server_archive,
+                &server_url,
                 "pyproject.toml",
             )?;
             prepare_portable_dependency_sources(&root, &staging)?;
@@ -2368,75 +2788,18 @@ fn install_environment_one(component: String) -> Result<InstallResult, String> {
         }
         "model" => {
             let config = read_tts_config(&paths)?;
-            let Some(uv) = bundled_uv(&root) else {
-                return Err("先に実行環境を準備してください。".to_string());
-            };
-            let Some(python) = find_bundled_python(&root) else {
-                return Err("先にPythonと必要な部品を準備してください。".to_string());
-            };
-            ensure_huggingface_hub(&uv, &python, &root, &runtime)?;
-            let checkpoint = split_hf_checkpoint_source(&config.model)?;
-            let model_dir = root
-                .join("models")
-                .join(config.model.replace(['/', '\\'], "__"));
-            let repo_json =
-                serde_json::to_string(&checkpoint.repo_id).map_err(|error| error.to_string())?;
-            let subfolder_json =
-                serde_json::to_string(&checkpoint.subfolder).map_err(|error| error.to_string())?;
-            let revision_json =
-                serde_json::to_string(&config.model_revision).map_err(|error| error.to_string())?;
-            let destination_json = serde_json::to_string(&model_dir.to_string_lossy())
-                .map_err(|error| error.to_string())?;
-            let code = format!(
-                "from pathlib import Path\n\
-import shutil\n\
-from huggingface_hub import snapshot_download\n\
-repo_id = {repo_json}\n\
-subfolder = {subfolder_json}\n\
-checkpoint_relative = Path(f'{{subfolder}}/model.safetensors') if subfolder else Path('model.safetensors')\n\
-allow_patterns = ([f'{{subfolder}}/model.safetensors', f'{{subfolder}}/tokenizer/*', 'tokenizer/*'] if subfolder else ['model.safetensors', 'tokenizer/*'])\n\
-snapshot_root = Path(snapshot_download(repo_id=repo_id, revision={revision_json}, allow_patterns=allow_patterns))\n\
-destination = Path({destination_json})\n\
-destination.mkdir(parents=True, exist_ok=True)\n\
-source_checkpoint = snapshot_root / checkpoint_relative\n\
-target_checkpoint = destination / checkpoint_relative\n\
-if not source_checkpoint.is_file(): raise FileNotFoundError(f'No model.safetensors found for {{repo_id}}/{{subfolder}}')\n\
-target_checkpoint.parent.mkdir(parents=True, exist_ok=True)\n\
-shutil.copy2(source_checkpoint, target_checkpoint)\n\
-tokenizer_relatives = [Path('tokenizer')] + ([Path(f'{{subfolder}}/tokenizer')] if subfolder else [])\n\
-[shutil.copytree(snapshot_root / relative, destination / relative, dirs_exist_ok=True) for relative in tokenizer_relatives if (snapshot_root / relative).is_dir()]"
-            );
-            let mut command = Command::new(&python);
-            command.args(["-c", &code]);
-            let site_packages = runtime.join("env").join("Lib").join("site-packages");
-            if site_packages.is_dir() {
-                command.env("PYTHONPATH", site_packages);
-            }
-            let hf_home = root.join("models").join("hf-cache");
-            command.env("HF_HOME", &hf_home);
-            command.env("HF_HUB_CACHE", hf_home.join("hub"));
-            command.env("TORCH_HOME", root.join("models").join("torch-cache"));
-            command.env("PYTHONNOUSERSITE", "1");
-            #[cfg(target_os = "windows")]
-            command.creation_flags(CREATE_NO_WINDOW);
-            let output = command.output().map_err(|error| error.to_string())?;
-            if !output.status.success() {
-                return Err(String::from_utf8_lossy(&output.stderr).to_string());
-            }
-            Ok(InstallResult {
-                component,
-                installed: model_dir.is_dir(),
-                message: "選択した音声モデルをアプリ内へ保存しました。".to_string(),
-                path: model_dir.to_string_lossy().into_owned(),
-            })
+            install_huggingface_model(&root, &config.model, &config.model_revision, app)
         }
         _ => Err("指定されたインストール項目は利用できません。".to_string()),
     }
 }
 
-fn install_environment_sync(component: String) -> Result<InstallResult, String> {
+fn install_environment_sync(
+    component: String,
+    app: Option<&AppHandle>,
+) -> Result<InstallResult, String> {
     if component != "auto" {
-        return install_environment_one(component);
+        return install_environment_one(component, app);
     }
     let paths = ensure_directories()?;
     let root = PathBuf::from(&paths.root);
@@ -2466,7 +2829,7 @@ fn install_environment_sync(component: String) -> Result<InstallResult, String> 
     let mut completed = Vec::new();
     for item in order {
         if missing.contains(&item) {
-            completed.push(install_environment_one(item.to_string())?.message);
+            completed.push(install_environment_one(item.to_string(), app)?.message);
         }
     }
     let remaining = environment_info(&root)
@@ -2492,10 +2855,56 @@ fn install_environment_sync(component: String) -> Result<InstallResult, String> 
 }
 
 #[tauri::command(rename_all = "camelCase")]
-async fn install_environment(component: String) -> Result<InstallResult, String> {
-    tauri::async_runtime::spawn_blocking(move || install_environment_sync(component))
+async fn install_environment(app: AppHandle, component: String) -> Result<InstallResult, String> {
+    tauri::async_runtime::spawn_blocking(move || install_environment_sync(component, Some(&app)))
         .await
         .map_err(|error| format!("環境の準備に失敗しました: {error}"))?
+}
+
+#[tauri::command(rename_all = "camelCase")]
+async fn install_model(
+    app: AppHandle,
+    model: String,
+    revision: String,
+) -> Result<InstallResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let paths = ensure_directories()?;
+        let root = PathBuf::from(&paths.root);
+        install_huggingface_model(&root, &model, &revision, Some(&app))
+    })
+    .await
+    .map_err(|error| format!("音声モデルの準備に失敗しました: {error}"))?
+}
+
+#[tauri::command(rename_all = "camelCase")]
+async fn search_huggingface_models(query: String) -> Result<Vec<HuggingFaceModel>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let query = query.trim().to_string();
+        if query.len() < 2 {
+            return Ok(Vec::new());
+        }
+        let client = Client::builder()
+            .user_agent("IrodoriStudio/0.1")
+            .connect_timeout(Duration::from_secs(20))
+            .timeout(Duration::from_secs(60))
+            .build()
+            .map_err(|error| error.to_string())?;
+        client
+            .get("https://huggingface.co/api/models")
+            .query(&[
+                ("search", query.as_str()),
+                ("limit", "20"),
+                ("sort", "downloads"),
+            ])
+            .send()
+            .map_err(|error| format!("Hugging Faceを検索できません: {error}"))?
+            .error_for_status()
+            .map_err(|error| format!("Hugging Faceを検索できません: {error}"))?
+            .json::<Vec<HuggingFaceModel>>()
+            .map_err(|error| format!("Hugging Faceの検索結果を読み込めません: {error}"))
+    })
+    .await
+    .map_err(|error| format!("Hugging Faceの検索に失敗しました: {error}"))?
 }
 
 pub fn run() {
@@ -2513,6 +2922,7 @@ pub fn run() {
             save_voice,
             delete_voice,
             get_tts_config,
+            list_installed_models,
             save_tts_config,
             get_tts_status,
             start_tts,
@@ -2524,7 +2934,9 @@ pub fn run() {
             list_favorites,
             export_favorite,
             open_audio_folder,
-            install_environment
+            install_environment,
+            install_model,
+            search_huggingface_models
         ]);
     let app = builder
         .build(tauri::generate_context!())
@@ -2639,5 +3051,38 @@ mod tests {
             config.portable_root,
             Some(new_root.to_string_lossy().into_owned())
         );
+    }
+
+    #[test]
+    fn model_revision_follows_selected_builtin_model() {
+        let mut config = default_tts_config().expect("default config");
+        assert_eq!(config.model, ANIME_QUANTIZED_MODEL);
+        assert_eq!(config.model_revision, "main");
+
+        config.model = "Aratako/Irodori-TTS-v4.1-Small".to_string();
+        config.model_revision = "main".to_string();
+
+        assert!(normalize_model_revision(&mut config));
+        assert_eq!(config.model_revision, ORIGINAL_MODEL_REVISION);
+
+        config.model = "Aratako/Irodori-TTS-v4.1-Small-Quantized/int8-weight-only".to_string();
+        assert!(normalize_model_revision(&mut config));
+        assert_eq!(config.model_revision, QUANTIZED_MODEL_REVISION);
+    }
+
+    #[test]
+    fn save_json_replaces_existing_file_and_cleans_temporary_files() {
+        let root = env::temp_dir().join(format!("irodori-save-json-{}", Uuid::new_v4()));
+        let path = root.join("settings.json");
+        save_json(&path, &json!({ "value": 1 })).expect("first write");
+        save_json(&path, &json!({ "value": 2 })).expect("replacement write");
+        let saved: Value = load_json(&path)
+            .expect("read saved json")
+            .expect("saved json");
+
+        assert_eq!(saved["value"], 2);
+        assert!(!path.with_extension("tmp").exists());
+        assert!(!path.with_extension("bak").exists());
+        let _ = fs::remove_dir_all(root);
     }
 }

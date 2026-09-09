@@ -7,6 +7,14 @@ licenses/Irodori-TTS-LICENSE.txt と licenses/Irodori-TTS-Server-LICENSE.txt は
 開発時に確認したソースrevision:
 - Irodori-TTS: 8224dafb46d0aba89209a8f905f1cb7e3299d9c1
 - Irodori-TTS-Server: 841fb7c6ec57729c56b9b75c0ef2562249b13a10
+- DACVAE: 414c20785fc3a28373073ea8ef7a1316eeeaca6e
+- SilentCipher: d46d7d0893a583d8968ab3a6626e2289faec9152
+- uv: 0.12.9
+- Irodori-TTS-v4.1-Small: 2b28324dc263ed5e6638b3cf3dd94c82ead07b4b
+- Irodori-TTS-v4.1-Small-Quantized: ef04e6c3ba56138ae23e86a2eabc004f76990e37
+
+初回セットアップでは、上記のソースrevisionとuvのバージョンを固定して取得します。
+FFmpegは固定版を優先し、取得できない場合のみ互換用の代替配布元を使用します。
 
 主な配布元:
 - https://github.com/Aratako/Irodori-TTS

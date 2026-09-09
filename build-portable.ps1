@@ -6,7 +6,7 @@ if (-not (Test-Path -LiteralPath $binary)) {
 }
 $destination = Join-Path $projectRoot "IrodoriStudio.exe"
 if (-not (Test-Path -LiteralPath $binary)) {
-    throw "ビルド済みのIrodoriStudio.exeがありません。先に npm run tauri build -- --no-bundle を実行してください。"
+    throw "Built IrodoriStudio.exe was not found. Run npm run tauri build -- --no-bundle first."
 }
 Copy-Item -LiteralPath $binary -Destination $destination -Force
 foreach ($relative in @("runtime", "irodori", "server", "models", "data\voices", "data\favorites", "data\history", "data\temp", "data\cache", "data\logs", "licenses")) {
