@@ -212,11 +212,14 @@ textarea:focus, input:focus, select:focus { border-color: var(--accent); box-sha
 .model-download-hint { color: var(--muted); font-size: 9px; }
 .model-search-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 7px; }
 .model-search-row input { min-width: 0; padding: 11px 12px; color: #e2e7f2; background: #0c121b; border: 1px solid #34425a; border-radius: 8px; font-size: 11px; }
-.model-search-results { display: grid; gap: 5px; max-height: 155px; margin-top: 8px; overflow: auto; }
-.model-search-results button { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 10px; color: #ccd5e4; background: #0d141e; border: 1px solid #243147; border-radius: 7px; text-align: left; }
-.model-search-results button:hover { border-color: var(--accent); }
+.model-search-results { display: grid; gap: 5px; max-height: 240px; margin-top: 8px; overflow: auto; }
+.model-search-result { display: grid; gap: 6px; padding: 8px 10px; color: #ccd5e4; background: #0d141e; border: 1px solid #243147; border-radius: 7px; }
+.model-search-result > div:first-child { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-width: 0; }
 .model-search-results b { overflow: hidden; font: 10px "DM Mono", monospace; text-overflow: ellipsis; white-space: nowrap; }
 .model-search-results small { flex: 0 0 auto; color: var(--muted); font-size: 9px; }
+.model-variants { display: flex; flex-wrap: wrap; gap: 5px; }
+.model-variants button { padding: 3px 8px; color: #ccd5e4; background: #131c29; border: 1px solid #2a3850; border-radius: 99px; font: 9px "DM Mono", monospace; }
+.model-variants button:hover, .model-variants button.active { color: #fff; border-color: var(--accent); }
 .model-progress { margin-top: 14px; padding-top: 12px; border-top: 1px solid #253044; }
 .model-progress-heading { display: flex; justify-content: space-between; align-items: center; font-size: 10px; }
 .model-progress-heading strong { color: var(--good); font: 12px "DM Mono", monospace; }
@@ -451,3 +454,8 @@ body.editor-mode .editor-two { grid-template-columns: repeat(2, minmax(0, 1fr));
   .icon-picker-copy { display: grid; grid-template-columns: 1fr auto; }
   .icon-picker-copy b, .icon-picker-copy small, .icon-file-name { grid-column: 1 / -1; }
 }
+
+/* セットアップ中の進捗表示。長いログ行は1行に収める */
+.install-live { margin-top: 10px; }
+.install-live small { display: block; overflow: hidden; color: var(--muted); font: 9px "DM Mono", monospace; text-overflow: ellipsis; white-space: nowrap; }
+.inline-message.warning { color: var(--warn); }

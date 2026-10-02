@@ -4,13 +4,16 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use std::env;
 use std::fs::{self, File, OpenOptions};
-use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager, RunEvent, State};
 use uuid::Uuid;
+
+mod download;
+mod gpu;
+mod hf;
 
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
@@ -32,14 +35,18 @@ const ANIME_QUANTIZED_MODEL: &str = "phasefield-audio/Irodori-TTS-v4.1-Anime/int
 // Anime版はチェックポイント内の長さ推定を使う。既定値のままだと日本語の
 // 長文を短く見積もり、早口化や語句落ちにつながるため余裕を持たせる。
 const ANIME_DURATION_SCALE: f64 = 1.35;
+// BtbNの日付付きautobuildは古いものから削除されるため、名前が変わらない最新版のURLを使う。
 const FFMPEG_DOWNLOAD_URLS: [&str; 2] = [
-    "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-06-13-06/ffmpeg-N-126435-gf93cd72dde-win64-gpl.zip",
+    "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip",
     "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip",
 ];
 
 #[derive(Default)]
 pub struct RuntimeState {
     process: Mutex<Option<ManagedProcess>>,
+    /// 以前の起動で残ったサーバーのうち、本物と確認済みのPID。
+    /// 確認にはPowerShellの起動が必要で重いため、同じPIDでは繰り返さない。
+    verified_pid: Mutex<Option<u32>>,
 }
 
 struct ManagedProcess {
@@ -212,25 +219,6 @@ struct InstallResult {
     installed: bool,
     message: String,
     path: String,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-struct HuggingFaceModel {
-    id: String,
-    #[serde(default)]
-    downloads: Option<u64>,
-    #[serde(default)]
-    likes: Option<u64>,
-}
-
-#[derive(Debug, Deserialize)]
-struct HuggingFaceTreeEntry {
-    path: String,
-    #[serde(rename = "type")]
-    entry_type: String,
-    #[serde(default)]
-    size: Option<u64>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -879,14 +867,81 @@ fn has_dependencies(root: &Path, server_root: &Path, irodori_root: &Path) -> boo
         && server_root.join("pyproject.toml").is_file()
 }
 
+/// 設定で選んでいるモデルが手元にあるか。
+/// 別のモデルだけが入っている状態で「準備済み」とすると、サーバーが起動時に
+/// 進捗表示なしで数GBを取得し始めてしまうため、選択中のモデルで判定する。
 fn has_model(root: &Path) -> bool {
-    find_file_recursive(&root.join("models"), "model.safetensors").is_some()
+    let Ok(paths) = portable_paths() else {
+        return false;
+    };
+    let Some(config) = load_json::<TtsConfig>(&json_path(&paths, "settings.json"))
+        .ok()
+        .flatten()
+        .or_else(|| default_tts_config().ok())
+    else {
+        return false;
+    };
+    if installed_model_checkpoint(root, &config.model).is_none() {
+        return false;
+    }
+    // 版の記録がない（以前のバージョンで導入した）モデルはそのまま使える扱いにする。
+    hf::read_marker(&model_destination(root, &config.model)).is_none_or(|marker| {
+        let wanted = config.model_revision.trim();
+        wanted.is_empty() || marker.requested_revision == wanted || marker.commit == wanted
+    })
+}
+
+fn cuda_fallback_marker(root: &Path) -> PathBuf {
+    root.join("data").join("cuda-fallback.json")
+}
+
+/// GPUの判定。実際にCUDA版で動作確認して失敗したPCは、記録を残してCPU版として扱う。
+fn cuda_support(root: &Path) -> gpu::CudaSupport {
+    match gpu::detect() {
+        gpu::CudaSupport::Supported(info) if cuda_fallback_marker(root).is_file() => {
+            gpu::CudaSupport::Unsupported(
+                info,
+                "GPUでの動作確認に失敗したためCPUで動作します".to_string(),
+            )
+        }
+        other => other,
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn free_space_gb(root: &Path) -> Option<f64> {
+    use std::os::windows::ffi::OsStrExt;
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetDiskFreeSpaceExW(
+            directory: *const u16,
+            free_to_caller: *mut u64,
+            total: *mut u64,
+            total_free: *mut u64,
+        ) -> i32;
+    }
+    let wide = root
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let mut free = 0_u64;
+    // SAFETY: wideはNUL終端済みで、出力先は有効なu64を指す。
+    let ok = unsafe {
+        GetDiskFreeSpaceExW(wide.as_ptr(), &mut free, std::ptr::null_mut(), std::ptr::null_mut())
+    };
+    (ok != 0).then(|| free as f64 / 1024_f64.powi(3))
+}
+
+#[cfg(not(target_os = "windows"))]
+fn free_space_gb(_root: &Path) -> Option<f64> {
+    None
 }
 
 fn environment_info(root: &Path) -> EnvironmentInfo {
     let (irodori_root, server_root) = default_roots(root);
-    let gpu_output = probe_command("nvidia-smi", &["--query-gpu=name", "--format=csv,noheader"]);
-    let cuda_available = gpu_output != "未検出";
+    let cuda = cuda_support(root);
+    let cuda_available = cuda.is_supported();
     let uv_path = root.join("runtime").join("uv.exe");
     let ffmpeg_path = find_file_recursive(&root.join("runtime"), "ffmpeg.exe");
     let python_path = find_python(root, &server_root, &irodori_root);
@@ -908,11 +963,7 @@ fn environment_info(root: &Path) -> EnvironmentInfo {
         windows: probe_command("cmd", &["/C", "ver"]),
         architecture: env::consts::ARCH.to_string(),
         cpu: env::var("PROCESSOR_IDENTIFIER").unwrap_or_else(|_| "Windows CPU".to_string()),
-        gpu: if cuda_available {
-            gpu_output
-        } else {
-            "対応GPUを検出できない".to_string()
-        },
+        gpu: cuda.summary(),
         cuda_available,
         python: if python_installed {
             python_path.to_string_lossy().into_owned()
@@ -929,7 +980,7 @@ fn environment_info(root: &Path) -> EnvironmentInfo {
         } else {
             "runtime\\ffmpeg.exe（未準備）".to_string()
         },
-        free_space_gb: None,
+        free_space_gb: free_space_gb(root),
         writable: check_writable(root),
         irodori_root: irodori_root.to_string_lossy().into_owned(),
         server_root: server_root.to_string_lossy().into_owned(),
@@ -965,7 +1016,7 @@ fn environment_info(root: &Path) -> EnvironmentInfo {
                 "音声モデル",
                 has_model(root),
                 true,
-                "選択したモデル",
+                "設定で選択中のモデル",
             ),
             component_status(
                 "ffmpeg",
@@ -1238,21 +1289,26 @@ fn process_exists(pid: u32) -> bool {
     }
     #[cfg(target_os = "windows")]
     {
-        let filter = format!("PID eq {pid}");
-        let mut command = Command::new("tasklist");
-        command.args(["/FI", &filter, "/NH"]);
-        command.creation_flags(CREATE_NO_WINDOW);
-        return command
-            .output()
-            .ok()
-            .filter(|output| output.status.success())
-            .map(|output| {
-                let pid = pid.to_string();
-                String::from_utf8_lossy(&output.stdout)
-                    .lines()
-                    .any(|line| line.split_whitespace().any(|token| token == pid))
-            })
-            .unwrap_or(false);
+        // 状態確認は2.5秒ごとに呼ばれるため、tasklistを起動せずWin32 APIで直接確認する。
+        const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
+        const STILL_ACTIVE: u32 = 259;
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn OpenProcess(access: u32, inherit: i32, pid: u32) -> isize;
+            fn GetExitCodeProcess(process: isize, code: *mut u32) -> i32;
+            fn CloseHandle(handle: isize) -> i32;
+        }
+        // SAFETY: 取得したハンドルは必ずCloseHandleで閉じる。
+        unsafe {
+            let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+            if handle == 0 {
+                return false;
+            }
+            let mut code = 0_u32;
+            let ok = GetExitCodeProcess(handle, &mut code);
+            CloseHandle(handle);
+            ok != 0 && code == STILL_ACTIVE
+        }
     }
     #[cfg(not(target_os = "windows"))]
     {
@@ -1314,10 +1370,21 @@ fn status_for(runtime: &RuntimeState, paths: &PortablePaths, config: &TtsConfig)
                 .get("pid")
                 .and_then(Value::as_u64)
                 .unwrap_or_default() as u32;
-            if pid > 0 && process_exists(pid) && is_expected_server(pid, config) {
+            let already_verified = runtime
+                .verified_pid
+                .lock()
+                .map(|verified| *verified == Some(pid))
+                .unwrap_or(false);
+            if pid > 0 && process_exists(pid) && (already_verified || is_expected_server(pid, config)) {
                 owned_pid = Some(pid);
+                if let Ok(mut verified) = runtime.verified_pid.lock() {
+                    *verified = Some(pid);
+                }
             } else {
                 clear_marker = true;
+                if let Ok(mut verified) = runtime.verified_pid.lock() {
+                    *verified = None;
+                }
             }
         }
     }
@@ -1573,8 +1640,73 @@ fn load_audio_base64(path: &Path) -> Option<String> {
     fs::read(path).ok().map(|bytes| BASE64.encode(bytes))
 }
 
+/// お気に入り以外の生成音声を残す期間。生成結果は一時ファイルとして扱い、
+/// 残したい音声はお気に入りへ移す運用のため、古いものから自動で消す。
+const TEMP_AUDIO_RETENTION: Duration = Duration::from_secs(3 * 24 * 60 * 60);
+/// generations.json に残す、お気に入り以外の履歴の上限。
+const MAX_PLAIN_HISTORY: usize = 300;
+
+/// 起動時の後片付け。古い一時音声・不要になった履歴・使い終わったインストーラーを消す。
+fn cleanup_on_startup(paths: &PortablePaths) {
+    let temp = PathBuf::from(&paths.temp);
+    let now = SystemTime::now();
+    for entry in fs::read_dir(&temp).into_iter().flatten().flatten() {
+        let path = entry.path();
+        let expired = entry
+            .metadata()
+            .ok()
+            .filter(|meta| meta.is_file())
+            .and_then(|meta| meta.modified().ok())
+            .and_then(|modified| now.duration_since(modified).ok())
+            .is_some_and(|age| age >= TEMP_AUDIO_RETENTION);
+        if expired {
+            let _ = fs::remove_file(path);
+        }
+    }
+    let root = PathBuf::from(&paths.root);
+    let installer = temp.join("installer");
+    if installer.is_dir()
+        && environment_info(&root)
+            .components
+            .iter()
+            .all(|item| !item.required || item.installed)
+    {
+        let _ = fs::remove_dir_all(installer);
+    }
+    if let Ok(history) = load_generations(paths) {
+        let pruned = prune_history(history);
+        let _ = save_generations(paths, &pruned);
+    }
+}
+
+/// 音声ファイルが消えた履歴を外し、お気に入り以外は新しいものから上限件数まで残す。
+fn prune_history(history: Vec<Generation>) -> Vec<Generation> {
+    let mut plain_kept = 0_usize;
+    let mut kept = history
+        .into_iter()
+        .rev()
+        .filter(|generation| {
+            if generation.is_favorite {
+                return true;
+            }
+            if !Path::new(&generation.audio_path).is_file() || plain_kept >= MAX_PLAIN_HISTORY {
+                return false;
+            }
+            plain_kept += 1;
+            true
+        })
+        .collect::<Vec<_>>();
+    kept.reverse();
+    kept
+}
+
 #[tauri::command]
 fn initialize_app() -> Result<AppState, String> {
+    if let Ok(paths) = ensure_directories() {
+        cleanup_on_startup(&paths);
+    }
+    // 利用条件などの説明ファイルが消されていたら書き戻す。失敗しても起動は続ける。
+    let _ = prepare_runtime();
     app_state()
 }
 
@@ -1586,17 +1718,8 @@ fn check_environment() -> Result<EnvironmentInfo, String> {
 
 #[tauri::command]
 fn prepare_runtime() -> Result<(), String> {
-    let paths = ensure_directories()?;
+    ensure_directories()?;
     let (root, _) = paths_as_path()?;
-    for entry in fs::read_dir(&paths.temp)
-        .map_err(|error| error.to_string())?
-        .flatten()
-    {
-        let path = entry.path();
-        if path.is_file() {
-            let _ = fs::remove_file(path);
-        }
-    }
     let notice = root.join("VOICE_CLONING_NOTICE.txt");
     if !notice.is_file() {
         fs::write(notice, include_str!("../../VOICE_CLONING_NOTICE.txt"))
@@ -2224,13 +2347,16 @@ fn model_destination(root: &Path, model: &str) -> PathBuf {
 }
 
 fn installed_model_checkpoint(root: &Path, model: &str) -> Option<PathBuf> {
+    installed_model_checkpoint_in(&model_destination(root, model), model)
+}
+
+fn installed_model_checkpoint_in(destination: &Path, model: &str) -> Option<PathBuf> {
     let source = split_hf_checkpoint_source(model).ok()?;
-    let destination = model_destination(root, model);
     let checkpoint = source
         .subfolder
         .as_deref()
         .map(|folder| destination.join(folder))
-        .unwrap_or(destination);
+        .unwrap_or_else(|| destination.to_path_buf());
     let model_file = checkpoint.join("model.safetensors");
     model_file.is_file().then_some(model_file)
 }
@@ -2266,211 +2392,15 @@ fn emit_model_progress(app: Option<&AppHandle>, progress: ModelInstallProgress) 
     }
 }
 
-fn install_huggingface_model(
-    root: &Path,
-    model: &str,
-    revision: &str,
-    app: Option<&AppHandle>,
-) -> Result<InstallResult, String> {
-    let checkpoint = split_hf_checkpoint_source(model)?;
-    let revision = if revision.trim().is_empty() {
-        "main"
-    } else {
-        revision.trim()
-    };
-    let client = Client::builder()
-        .user_agent("IrodoriStudio/0.1")
-        .connect_timeout(Duration::from_secs(30))
-        .timeout(Duration::from_secs(900))
-        .build()
-        .map_err(|error| error.to_string())?;
-    let tree_url = format!(
-        "https://huggingface.co/api/models/{}/tree/{}",
-        checkpoint.repo_id, revision
-    );
-    let entries = client
-        .get(tree_url)
-        .query(&[("recursive", "true"), ("expand", "false")])
-        .send()
-        .map_err(|error| format!("Hugging Faceのモデル一覧を取得できません: {error}"))?
-        .error_for_status()
-        .map_err(|error| format!("Hugging Faceのモデル一覧を取得できません: {error}"))?
-        .json::<Vec<HuggingFaceTreeEntry>>()
-        .map_err(|error| format!("Hugging Faceのモデル一覧を読み込めません: {error}"))?;
-
-    let checkpoint_path = checkpoint
-        .subfolder
-        .as_deref()
-        .map(|folder| format!("{folder}/model.safetensors"))
-        .unwrap_or_else(|| "model.safetensors".to_string());
-    let mut files = entries
-        .into_iter()
-        .filter(|entry| entry.entry_type == "file")
-        .filter(|entry| {
-            entry.path == checkpoint_path
-                || (entry.path.starts_with("tokenizer/")
-                    && entry.path != "tokenizer/"
-                    && !entry.path.ends_with('/'))
-                || checkpoint
-                    .subfolder
-                    .as_deref()
-                    .is_some_and(|folder| entry.path.starts_with(&format!("{folder}/tokenizer/")))
-        })
-        .collect::<Vec<_>>();
-    files.sort_by(|left, right| left.path.cmp(&right.path));
-    if !files.iter().any(|entry| entry.path == checkpoint_path) {
-        return Err(format!(
-            "モデルに model.safetensors が見つかりません: {model}"
-        ));
-    }
-
-    let total_bytes = files.iter().filter_map(|entry| entry.size).sum::<u64>();
-    let destination = model_destination(root, model);
-    fs::create_dir_all(&destination).map_err(|error| error.to_string())?;
-    let mut completed_bytes = 0_u64;
-    for entry in files {
-        let target = destination.join(&entry.path);
-        if let Some(parent) = target.parent() {
-            fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-        }
-        let expected_size = entry.size.unwrap_or(0);
-        if target.is_file()
-            && (expected_size == 0
-                || target.metadata().map(|meta| meta.len()).unwrap_or(0) == expected_size)
-        {
-            completed_bytes = completed_bytes.saturating_add(expected_size);
-            emit_model_progress(
-                app,
-                ModelInstallProgress {
-                    model: model.to_string(),
-                    file: entry.path,
-                    percent: if total_bytes == 0 {
-                        0.0
-                    } else {
-                        completed_bytes as f64 * 100.0 / total_bytes as f64
-                    },
-                    downloaded_bytes: completed_bytes,
-                    total_bytes,
-                },
-            );
-            continue;
-        }
-
-        let url = format!(
-            "https://huggingface.co/{}/resolve/{}/{}",
-            checkpoint.repo_id, revision, entry.path
-        );
-        let mut response = client
-            .get(url)
-            .send()
-            .map_err(|error| format!("モデルのダウンロードに失敗しました: {error}"))?
-            .error_for_status()
-            .map_err(|error| format!("モデルのダウンロードに失敗しました: {error}"))?;
-        let response_size = response.content_length().unwrap_or(expected_size);
-        let partial = target.with_extension("part");
-        let mut file = File::create(&partial).map_err(|error| error.to_string())?;
-        let mut downloaded_file = 0_u64;
-        let mut buffer = [0_u8; 1024 * 1024];
-        loop {
-            let read = response
-                .read(&mut buffer)
-                .map_err(|error| format!("モデルの保存に失敗しました: {error}"))?;
-            if read == 0 {
-                break;
-            }
-            std::io::Write::write_all(&mut file, &buffer[..read])
-                .map_err(|error| format!("モデルの保存に失敗しました: {error}"))?;
-            downloaded_file = downloaded_file.saturating_add(read as u64);
-            let current = completed_bytes.saturating_add(downloaded_file);
-            emit_model_progress(
-                app,
-                ModelInstallProgress {
-                    model: model.to_string(),
-                    file: entry.path.clone(),
-                    percent: if total_bytes == 0 {
-                        0.0
-                    } else {
-                        current as f64 * 100.0 / total_bytes as f64
-                    },
-                    downloaded_bytes: current,
-                    total_bytes,
-                },
-            );
-        }
-        drop(file);
-        if expected_size > 0 && downloaded_file != expected_size && response_size != downloaded_file
-        {
-            let _ = fs::remove_file(&partial);
-            return Err(format!(
-                "モデルファイルのサイズが一致しません: {}",
-                entry.path
-            ));
-        }
-        if target.is_file() {
-            fs::remove_file(&target).map_err(|error| error.to_string())?;
-        }
-        fs::rename(&partial, &target).map_err(|error| error.to_string())?;
-        completed_bytes = completed_bytes.saturating_add(downloaded_file);
-    }
-
-    emit_model_progress(
-        app,
-        ModelInstallProgress {
-            model: model.to_string(),
-            file: "完了".to_string(),
-            percent: 100.0,
-            downloaded_bytes: total_bytes,
-            total_bytes,
-        },
-    );
-    Ok(InstallResult {
-        component: "model".to_string(),
-        installed: destination.join("model.safetensors").is_file()
-            || checkpoint
-                .subfolder
-                .as_deref()
-                .is_some_and(|folder| destination.join(folder).join("model.safetensors").is_file()),
-        message: format!("{model} をアプリ内へ保存しました。"),
-        path: destination.to_string_lossy().into_owned(),
-    })
-}
-
 fn download_zip(url: &str, destination: &Path) -> Result<(), String> {
-    let client = Client::builder()
-        .user_agent("IrodoriStudio/0.1")
-        .connect_timeout(Duration::from_secs(30))
-        .timeout(Duration::from_secs(900))
-        .build()
-        .map_err(|error| error.to_string())?;
-    let partial = destination.with_extension("zip.part");
-    let result = (|| {
-        let mut response = client
-            .get(url)
-            .send()
-            .map_err(|error| format!("ダウンロードに失敗: {error}"))?;
-        if !response.status().is_success() {
-            return Err(format!(
-                "ダウンロード先がHTTP {}を返しました。",
-                response.status()
-            ));
-        }
-        let mut file = File::create(&partial).map_err(|error| error.to_string())?;
-        let bytes = response
-            .copy_to(&mut file)
-            .map_err(|error| format!("ファイルの保存に失敗: {error}"))?;
-        if bytes == 0 {
-            return Err("ダウンロードされたファイルが空です。".to_string());
-        }
-        drop(file);
-        if destination.is_file() {
-            fs::remove_file(destination).map_err(|error| error.to_string())?;
-        }
-        fs::rename(&partial, destination).map_err(|error| error.to_string())
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(&partial);
-    }
-    result.map_err(|error| format!("{url}: {error}"))
+    let client = download::client()?;
+    download::download_file(
+        &client,
+        url,
+        destination,
+        &download::Expected { size: None, sha256: None },
+        &mut |_| {},
+    )
 }
 
 fn download_zip_with_fallback(urls: &[&str], destination: &Path) -> Result<(), String> {
@@ -2672,6 +2602,121 @@ fn prepare_portable_dependency_sources(root: &Path, staging: &Path) -> Result<()
     Ok(())
 }
 
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct InstallProgress {
+    component: String,
+    message: String,
+}
+
+fn emit_install_progress(app: Option<&AppHandle>, component: &str, message: &str) {
+    if let Some(app) = app {
+        let _ = app.emit(
+            "install-progress",
+            InstallProgress {
+                component: component.to_string(),
+                message: message.to_string(),
+            },
+        );
+    }
+}
+
+/// 時間のかかる外部コマンドを実行し、出力を1行ずつ画面へ送る。
+/// 何十分も無反応に見えると、利用者は固まったと判断して閉じてしまうため。
+fn run_with_progress(
+    mut command: Command,
+    app: Option<&AppHandle>,
+    component: &str,
+) -> Result<(), String> {
+    use std::io::{BufRead, BufReader};
+    #[cfg(target_os = "windows")]
+    command.creation_flags(CREATE_NO_WINDOW);
+    command.env("NO_COLOR", "1");
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = command.spawn().map_err(|error| error.to_string())?;
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+    let (sender, receiver) = std::sync::mpsc::channel::<String>();
+    let mut readers = Vec::new();
+    for stream in [
+        stdout.map(|out| Box::new(out) as Box<dyn std::io::Read + Send>),
+        stderr.map(|err| Box::new(err) as Box<dyn std::io::Read + Send>),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        let sender = sender.clone();
+        readers.push(std::thread::spawn(move || {
+            // uvは進捗を改行なしの\rで上書きするため、\rも行の区切りとして扱う。
+            let mut reader = BufReader::new(stream);
+            let mut line = Vec::new();
+            loop {
+                let chunk = match reader.fill_buf() {
+                    Ok([]) | Err(_) => break,
+                    Ok(chunk) => chunk.to_vec(),
+                };
+                reader.consume(chunk.len());
+                for byte in chunk {
+                    if byte != b'\n' && byte != b'\r' {
+                        line.push(byte);
+                        continue;
+                    }
+                    let text = String::from_utf8_lossy(&line).trim().to_string();
+                    line.clear();
+                    if !text.is_empty() && sender.send(text).is_err() {
+                        return;
+                    }
+                }
+            }
+            let text = String::from_utf8_lossy(&line).trim().to_string();
+            if !text.is_empty() {
+                let _ = sender.send(text);
+            }
+        }));
+
+    }
+    drop(sender);
+    let mut recent = std::collections::VecDeque::with_capacity(40);
+    for line in receiver {
+        emit_install_progress(app, component, &line);
+        if recent.len() == 40 {
+            recent.pop_front();
+        }
+        recent.push_back(line);
+    }
+    for reader in readers {
+        let _ = reader.join();
+    }
+    let status = child.wait().map_err(|error| error.to_string())?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(recent.into_iter().collect::<Vec<_>>().join("\n"))
+    }
+}
+
+/// CUDA版PyTorchで実際に計算できるかを確認する。
+fn verify_cuda_runtime(root: &Path) -> Result<(), String> {
+    let python = root.join("runtime").join("env").join("Scripts").join("python.exe");
+    let mut command = Command::new(python);
+    command.args([
+        "-c",
+        "import torch; assert torch.cuda.is_available(), 'CUDA unavailable'; \
+         x = torch.ones(64, device='cuda'); print(float((x * 2).sum().item()))",
+    ]);
+    command.env("PYTHONNOUSERSITE", "1");
+    #[cfg(target_os = "windows")]
+    command.creation_flags(CREATE_NO_WINDOW);
+    let output = command.output().map_err(|error| error.to_string())?;
+    if output.status.success() && String::from_utf8_lossy(&output.stdout).trim() == "128.0" {
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let lines = stderr.lines().collect::<Vec<_>>();
+        Err(lines[lines.len().saturating_sub(20)..].join("\n"))
+    }
+}
+
 fn install_environment_one(
     component: String,
     app: Option<&AppHandle>,
@@ -2710,12 +2755,7 @@ fn install_environment_one(
                 runtime.join("python").to_string_lossy().as_ref(),
             ]);
             command.env("UV_PYTHON_INSTALL_DIR", runtime.join("python"));
-            #[cfg(target_os = "windows")]
-            command.creation_flags(CREATE_NO_WINDOW);
-            let output = command.output().map_err(|error| error.to_string())?;
-            if !output.status.success() {
-                return Err(String::from_utf8_lossy(&output.stderr).to_string());
-            }
+            run_with_progress(command, app, "python")?;
             Ok(InstallResult {
                 component,
                 installed: find_file_recursive(&runtime.join("python"), "python.exe").is_some(),
@@ -2803,39 +2843,60 @@ fn install_environment_one(
                 return Err("先に音声生成プログラムを準備してください。".to_string());
             }
             prepare_portable_dependency_sources(&root, &staging)?;
-            let extra = if environment_info(&root).cuda_available {
+            let sync = |extra: &str| -> Result<(), String> {
+                let mut command = Command::new(&uv);
+                command.args([
+                    "sync",
+                    "--project",
+                    server_project.to_string_lossy().as_ref(),
+                    "--extra",
+                    extra,
+                ]);
+                command.arg("--python").arg(&python);
+                command.env("UV_PROJECT_ENVIRONMENT", runtime.join("env"));
+                command.env("UV_PYTHON_INSTALL_DIR", runtime.join("python"));
+                command.env("UV_CACHE_DIR", root.join("data").join("uv-cache"));
+                run_with_progress(command, app, "dependencies")
+            };
+            let mut extra = if cuda_support(&root).is_supported() {
                 "cu128"
             } else {
                 "cpu"
             };
-            let mut command = Command::new(uv);
-            command.args([
-                "sync",
-                "--project",
-                server_project.to_string_lossy().as_ref(),
-                "--extra",
-                extra,
-            ]);
-            command.arg("--python").arg(&python);
-            command.env("UV_PROJECT_ENVIRONMENT", runtime.join("env"));
-            command.env("UV_PYTHON_INSTALL_DIR", runtime.join("python"));
-            command.env("UV_CACHE_DIR", root.join("data").join("uv-cache"));
-            #[cfg(target_os = "windows")]
-            command.creation_flags(CREATE_NO_WINDOW);
-            let output = command.output().map_err(|error| error.to_string())?;
-            if !output.status.success() {
-                return Err(String::from_utf8_lossy(&output.stderr).to_string());
+            sync(extra)?;
+            if extra == "cu128" {
+                emit_install_progress(app, "dependencies", "GPUで動作するか確認しています…");
+                if let Err(reason) = verify_cuda_runtime(&root) {
+                    // 実際に計算できないGPUでは、CPU版へ入れ替えて確実に動く状態にする。
+                    emit_install_progress(
+                        app,
+                        "dependencies",
+                        "GPUで動作しなかったため、CPU版に切り替えています…",
+                    );
+                    let _ = save_json(
+                        &cuda_fallback_marker(&root),
+                        &json!({ "failedAt": iso_now(), "reason": reason }),
+                    );
+                    extra = "cpu";
+                    sync(extra)?;
+                } else {
+                    let _ = fs::remove_file(cuda_fallback_marker(&root));
+                }
             }
             Ok(InstallResult {
                 component,
                 installed: has_dependencies(&root, &server_project, &detected_irodori_root),
-                message: format!("{extra}用の必要な部品を準備しました。"),
+                message: if extra == "cpu" {
+                    "CPU用の必要な部品を準備しました。".to_string()
+                } else {
+                    "GPU（CUDA）用の必要な部品を準備しました。".to_string()
+                },
                 path: runtime.join("env").to_string_lossy().into_owned(),
             })
         }
         "model" => {
             let config = read_tts_config(&paths)?;
-            install_huggingface_model(&root, &config.model, &config.model_revision, app)
+            hf::install(&root, &config.model, &config.model_revision, app)
         }
         _ => Err("指定されたインストール項目は利用できません。".to_string()),
     }
@@ -2917,41 +2978,17 @@ async fn install_model(
     tauri::async_runtime::spawn_blocking(move || {
         let paths = ensure_directories()?;
         let root = PathBuf::from(&paths.root);
-        install_huggingface_model(&root, &model, &revision, Some(&app))
+        hf::install(&root, &model, &revision, Some(&app))
     })
     .await
     .map_err(|error| format!("音声モデルの準備に失敗しました: {error}"))?
 }
 
 #[tauri::command(rename_all = "camelCase")]
-async fn search_huggingface_models(query: String) -> Result<Vec<HuggingFaceModel>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let query = query.trim().to_string();
-        if query.len() < 2 {
-            return Ok(Vec::new());
-        }
-        let client = Client::builder()
-            .user_agent("IrodoriStudio/0.1")
-            .connect_timeout(Duration::from_secs(20))
-            .timeout(Duration::from_secs(60))
-            .build()
-            .map_err(|error| error.to_string())?;
-        client
-            .get("https://huggingface.co/api/models")
-            .query(&[
-                ("search", query.as_str()),
-                ("limit", "20"),
-                ("sort", "downloads"),
-            ])
-            .send()
-            .map_err(|error| format!("Hugging Faceを検索できません: {error}"))?
-            .error_for_status()
-            .map_err(|error| format!("Hugging Faceを検索できません: {error}"))?
-            .json::<Vec<HuggingFaceModel>>()
-            .map_err(|error| format!("Hugging Faceの検索結果を読み込めません: {error}"))
-    })
-    .await
-    .map_err(|error| format!("Hugging Faceの検索に失敗しました: {error}"))?
+async fn search_huggingface_models(query: String) -> Result<Vec<hf::SearchResult>, String> {
+    tauri::async_runtime::spawn_blocking(move || hf::search(&query))
+        .await
+        .map_err(|error| format!("Hugging Faceの検索に失敗しました: {error}"))?
 }
 
 pub fn run() {

@@ -10,6 +10,7 @@ irodori/
 server/
 models/
 data/
+vendor/
 
 # GitHub publication staging folder
 github/
@@ -18,3 +19,9 @@ github/
 *.part
 *.tmp
 *.log
+
+# Personal shortcuts
+*.lnk
+
+# Packaged installers
+*-setup.exe
