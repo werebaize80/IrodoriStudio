@@ -1517,7 +1517,7 @@ fn build_server_command(
             "--port".to_string(),
             config.port.to_string(),
         ];
-        command = Command::new(&uv);
+        command = uv_command(root, &uv);
         command.args(&args);
     }
     command.current_dir(&server_root);
@@ -2344,6 +2344,17 @@ fn copy_dir(source: &Path, destination: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// アプリ内のuvを起動するコマンドを作る。
+/// キャッシュとPythonの保存先をアプリフォルダ内に固定し、利用者のuv設定ファイルも読まない。
+/// これにより、フォルダを削除すればアンインストールが完了し、PCごとの設定で取得元が変わることもない。
+fn uv_command(root: &Path, uv: &Path) -> Command {
+    let mut command = Command::new(uv);
+    command.env("UV_CACHE_DIR", root.join("data").join("uv-cache"));
+    command.env("UV_PYTHON_INSTALL_DIR", root.join("runtime").join("python"));
+    command.env("UV_NO_CONFIG", "1");
+    command
+}
+
 fn bundled_uv(root: &Path) -> Option<PathBuf> {
     let path = root.join("runtime").join("uv.exe");
     path.is_file().then_some(path)
@@ -2760,7 +2771,7 @@ fn install_environment_one(
             let Some(uv) = bundled_uv(&root) else {
                 return Err("先に実行環境を準備してください。".to_string());
             };
-            let mut command = Command::new(uv);
+            let mut command = uv_command(&root, &uv);
             command.args([
                 "python",
                 "install",
@@ -2768,7 +2779,6 @@ fn install_environment_one(
                 "--install-dir",
                 runtime.join("python").to_string_lossy().as_ref(),
             ]);
-            command.env("UV_PYTHON_INSTALL_DIR", runtime.join("python"));
             run_with_progress(command, app, "python")?;
             Ok(InstallResult {
                 component,
@@ -2865,7 +2875,7 @@ fn install_environment_one(
             }
             prepare_portable_dependency_sources(&root, &staging)?;
             let sync = |extra: &str| -> Result<(), String> {
-                let mut command = Command::new(&uv);
+                let mut command = uv_command(&root, &uv);
                 command.args([
                     "sync",
                     // uv.lock のバージョンとハッシュどおりに入れる。ロックとずれていたら作り直さずに止める
@@ -2877,8 +2887,7 @@ fn install_environment_one(
                 ]);
                 command.arg("--python").arg(&python);
                 command.env("UV_PROJECT_ENVIRONMENT", runtime.join("env"));
-                command.env("UV_PYTHON_INSTALL_DIR", runtime.join("python"));
-                command.env("UV_CACHE_DIR", root.join("data").join("uv-cache"));
+
                 run_with_progress(command, app, "dependencies")
             };
             let mut extra = if cuda_support(&root).is_supported() {
@@ -3015,6 +3024,11 @@ async fn search_huggingface_models(query: String) -> Result<Vec<hf::SearchResult
 }
 
 pub fn run() {
+    // WebView2は既定で %LOCALAPPDATA% に画面用のデータを作る。フォルダを消すだけで
+    // アンインストールできるよう、最初のウィンドウを作る前にアプリフォルダ内へ向ける。
+    if let Ok(root) = app_root() {
+        env::set_var("WEBVIEW2_USER_DATA_FOLDER", root.join("data").join("webview"));
+    }
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
