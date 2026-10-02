@@ -1,0 +1,20 @@
+# Local development and build output
+node_modules/
+dist/
+src-tauri/target/
+IrodoriStudio.exe
+
+# Files downloaded by the first-run setup
+runtime/
+irodori/
+server/
+models/
+data/
+
+# GitHub publication staging folder
+github/
+
+# Temporary download and log files
+*.part
+*.tmp
+*.log
