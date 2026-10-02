@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { save } from "@tauri-apps/plugin-dialog";
 import type { Generation, Notice } from "../types";
-import { call, dataAudio, errorText, normalizeGeneration, nowLabel, safeFileName } from "../utils";
+import { call, errorText, normalizeGeneration, nowLabel, safeFileName } from "../utils";
+import { WavePlayer } from "../components/WavePlayer";
 
 export function FavoritesPage({ onNotice }: { onNotice: (notice: Notice) => void }) {
   const [items, setItems] = useState<Generation[]>([]);
@@ -150,8 +151,7 @@ export function FriendlyFavoriteList({
       {items.map((item) => (
         <article className="surface favorite-item" key={item.id}>
           <div className="favorite-audio">
-            <audio controls src={dataAudio(item.audioBase64)} />
-            <span>{item.durationSeconds ? `${item.durationSeconds.toFixed(1)}秒` : "WAV音声"}</span>
+            <WavePlayer audioBase64={item.audioBase64} durationSeconds={item.durationSeconds} />
           </div>
           <div className="favorite-copy">
             <p>{item.text}</p>

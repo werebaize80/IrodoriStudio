@@ -1,4 +1,4 @@
-import { type ChangeEvent, useEffect, useState } from "react";
+import { type DragEvent, useEffect, useRef, useState } from "react";
 import type { Notice, Voice, VoiceDraft } from "../types";
 import { call, errorText, fileToData, isTauriRuntime } from "../utils";
 import { Toast, VoiceAvatar } from "../components/common";
@@ -24,6 +24,7 @@ export function VoicesPage({
           width: 780,
           height: 720,
           resizable: true,
+          dragDropEnabled: false,
         });
         void editor.once("tauri://error", (event) =>
           onNotice({
@@ -59,7 +60,7 @@ export function VoicesPage({
   }, []);
   if (draft)
     return (
-      <VoiceEditorForm
+      <FriendlyVoiceEditorForm
         initial={draft}
         onDone={(voice) => {
           setVoices(
@@ -109,161 +110,6 @@ export function VoicesPage({
     </section>
   );
 }
-export function VoiceEditorForm({
-  initial,
-  onDone,
-  onCancel,
-  onNotice,
-}: {
-  initial: VoiceDraft;
-  onDone: (voice: Voice) => void;
-  onCancel: () => void;
-  onNotice: (notice: Notice) => void;
-}) {
-  const [draft, setDraft] = useState<VoiceDraft>(initial);
-  const [saving, setSaving] = useState(false);
-  const [files, setFiles] = useState<{ name: string; data: string }[]>([]);
-  function update<K extends keyof VoiceDraft>(key: K, value: VoiceDraft[K]) {
-    setDraft((current) => ({ ...current, [key]: value }));
-  }
-  async function addFiles(event: ChangeEvent<HTMLInputElement>) {
-    const selected = Array.from(event.target.files ?? []);
-    const encoded = await Promise.all(
-      selected.map(async (file) => ({ name: file.name, data: await fileToData(file) })),
-    );
-    setFiles((current) => [...current, ...encoded]);
-  }
-  async function saveVoice() {
-    if (!draft.name.trim())
-      return onNotice({ kind: "warning", title: "ボイス名が空", body: "名前を付けてね。" });
-    setSaving(true);
-    try {
-      onDone(await call<Voice>("save_voice", { voice: draft, uploads: files, icon: null }));
-    } catch (error) {
-      onNotice({ kind: "error", title: "ボイスを保存できない", body: errorText(error) });
-    } finally {
-      setSaving(false);
-    }
-  }
-  async function deleteVoice() {
-    if (!draft.id || !window.confirm("このボイスを削除する？参照音声も削除されるわ。")) return;
-    setSaving(true);
-    try {
-      await call("delete_voice", { voiceId: draft.id });
-      onCancel();
-    } catch (error) {
-      onNotice({ kind: "error", title: "削除できない", body: errorText(error) });
-    } finally {
-      setSaving(false);
-    }
-  }
-  return (
-    <section className="editor-window">
-      <div className="editor-heading">
-        <div>
-          <span className="section-label">VOICE EDITOR</span>
-          <h1>ボイス編集</h1>
-        </div>
-        <button className="icon-button" onClick={onCancel}>
-          ×
-        </button>
-      </div>
-      <div className="editor-form">
-        <label className="field-label">
-          ボイス名
-          <input value={draft.name} onChange={(event) => update("name", event.target.value)} />
-        </label>
-        <div className="editor-two">
-          <label className="field-label">
-            VoiceDesign
-            <textarea
-              value={draft.voiceDesign}
-              onChange={(event) => update("voiceDesign", event.target.value)}
-              placeholder="声の特徴や演技の方向"
-            />
-          </label>
-          <label className="field-label">
-            Caption
-            <textarea
-              value={draft.caption}
-              onChange={(event) => update("caption", event.target.value)}
-              placeholder="落ち着いた自然な声"
-            />
-          </label>
-        </div>
-        <div className="reference-box">
-          <div className="card-heading">
-            <div>
-              <span className="section-label">REFERENCE AUDIO</span>
-              <h2>参照音声</h2>
-            </div>
-            <label className="button subtle small">
-              ＋ 追加
-              <input
-                type="file"
-                accept="audio/*"
-                multiple
-                hidden
-                onChange={(event) => void addFiles(event)}
-              />
-            </label>
-          </div>
-          <div className="reference-list">
-            {draft.references.map((reference, index) => (
-              <div className="reference-item" key={reference}>
-                <span className="drag-handle">⠿</span>
-                <span>♫</span>
-                <b>{reference.split(/[\\/]/u).pop()}</b>
-                <small>保存済み</small>
-                <button
-                  onClick={() =>
-                    update(
-                      "references",
-                      draft.references.filter((_, refIndex) => refIndex !== index),
-                    )
-                  }
-                >
-                  ×
-                </button>
-              </div>
-            ))}
-            {files.map((file, index) => (
-              <div className="reference-item new" key={`${file.name}-${index}`}>
-                <span className="drag-handle">⠿</span>
-                <span>♫</span>
-                <b>{file.name}</b>
-                <small>追加予定</small>
-                <button
-                  onClick={() => setFiles((current) => current.filter((_, fileIndex) => fileIndex !== index))}
-                >
-                  ×
-                </button>
-              </div>
-            ))}
-            {!draft.references.length && !files.length && (
-              <small className="muted">参照音声なし。VoiceDesignはCaptionだけでも利用できるわ。</small>
-            )}
-          </div>
-          <div className="reference-summary">合計参照時間はサーバー側のロード時に検証 · v4.1は最大120秒</div>
-        </div>
-        <div className="editor-actions">
-          <button className="button subtle" onClick={onCancel}>
-            キャンセル
-          </button>
-          {draft.id && (
-            <button className="button danger" onClick={() => void deleteVoice()} disabled={saving}>
-              削除
-            </button>
-          )}
-          <button className="button primary" onClick={() => void saveVoice()} disabled={saving}>
-            {saving ? "保存中…" : "保存"}
-          </button>
-        </div>
-      </div>
-    </section>
-  );
-}
-
 export function FriendlyVoiceEditorStandalone({ voiceId }: { voiceId: string }) {
   const [voice, setVoice] = useState<VoiceDraft | null>(null);
   const [error, setError] = useState("");
@@ -334,18 +180,48 @@ export function FriendlyVoiceEditorForm({
   const [saving, setSaving] = useState(false);
   const [files, setFiles] = useState<{ name: string; data: string }[]>([]);
   const [iconFile, setIconFile] = useState<{ name: string; data: string; mimeType: string } | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const dragDepth = useRef(0);
   function update<K extends keyof VoiceDraft>(key: K, value: VoiceDraft[K]) {
     setDraft((current) => ({ ...current, [key]: value }));
   }
-  async function addFiles(event: ChangeEvent<HTMLInputElement>) {
-    const selected = Array.from(event.target.files ?? []);
+  async function addFiles(selected: File[]) {
     const encoded = await Promise.all(
       selected.map(async (file) => ({ name: file.name, data: await fileToData(file) })),
     );
     setFiles((current) => [...current, ...encoded]);
   }
-  async function addIcon(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
+  /** ドロップされたファイルを種類で振り分ける（音声→参考ファイル、画像→アイコン） */
+  async function addDropped(dropped: File[]) {
+    const audio = dropped.filter(isAudioFile);
+    const images = dropped.filter(isImageFile);
+    const others = dropped.filter((file) => !isAudioFile(file) && !isImageFile(file));
+    if (audio.length) await addFiles(audio);
+    if (images.length) await addIcon(images[0]);
+    if (others.length)
+      onNotice({
+        kind: "warning",
+        title: "追加できないファイルがあります",
+        body: `音声ファイルか画像ファイルをドロップしてください: ${others.map((file) => file.name).join("、")}`,
+      });
+  }
+  function onDragEnter(event: DragEvent<HTMLElement>) {
+    if (!event.dataTransfer.types.includes("Files")) return;
+    event.preventDefault();
+    dragDepth.current += 1;
+    setDragging(true);
+  }
+  function onDragLeave() {
+    dragDepth.current = Math.max(0, dragDepth.current - 1);
+    if (dragDepth.current === 0) setDragging(false);
+  }
+  function onDrop(event: DragEvent<HTMLElement>) {
+    event.preventDefault();
+    dragDepth.current = 0;
+    setDragging(false);
+    void addDropped(Array.from(event.dataTransfer.files));
+  }
+  async function addIcon(file: File | undefined) {
     if (!file) return;
     const allowed = ["image/png", "image/jpeg", "image/webp", "image/gif", "image/bmp"];
     if (file.type && !allowed.includes(file.type))
@@ -401,7 +277,19 @@ export function FriendlyVoiceEditorForm({
     }
   }
   return (
-    <section className="editor-window">
+    <section
+      className={`editor-window ${dragging ? "drop-active" : ""}`}
+      onDragEnter={onDragEnter}
+      onDragOver={(event) => event.preventDefault()}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+    >
+      {dragging && (
+        <div className="drop-overlay" aria-hidden="true">
+          <b>ここにドロップ</b>
+          <small>音声ファイル → 声の参考ファイル　／　画像 → アイコン</small>
+        </div>
+      )}
       <div className="editor-heading">
         <div>
           <span className="section-label">ボイス設定</span>
@@ -427,14 +315,14 @@ export function FriendlyVoiceEditorForm({
           />
           <div className="icon-picker-copy">
             <b>アイコン画像</b>
-            <small>ボイス一覧に表示する画像（PNG / JPG / WEBP / GIF / BMP）</small>
+            <small>ボイス一覧に表示する画像（PNG / JPG / WEBP / GIF / BMP）。画像をドロップしても設定できます</small>
             <label className="button subtle small">
               画像を選ぶ
               <input
                 type="file"
                 accept="image/png,image/jpeg,image/webp,image/gif,image/bmp"
                 hidden
-                onChange={(event) => void addIcon(event)}
+                onChange={(event) => void addIcon(event.target.files?.[0])}
               />
             </label>
             {iconFile && <span className="icon-file-name">{iconFile.name}</span>}
@@ -471,7 +359,7 @@ export function FriendlyVoiceEditorForm({
                 accept="audio/*"
                 multiple
                 hidden
-                onChange={(event) => void addFiles(event)}
+                onChange={(event) => void addFiles(Array.from(event.target.files ?? []))}
               />
             </label>
           </div>
@@ -515,7 +403,7 @@ export function FriendlyVoiceEditorForm({
               </small>
             )}
           </div>
-          <div className="reference-summary">参照音声は合計120秒以内を推奨</div>
+          <div className="reference-summary">音声ファイルをこの画面にドロップしても追加できます · 合計120秒以内を推奨</div>
         </div>
         <div className="editor-actions">
           <button className="button subtle" onClick={onCancel}>
@@ -533,4 +421,15 @@ export function FriendlyVoiceEditorForm({
       </div>
     </section>
   );
+}
+
+const AUDIO_EXTENSIONS = /\.(wav|mp3|flac|ogg|m4a|aac|opus|webm)$/iu;
+const IMAGE_EXTENSIONS = /\.(png|jpe?g|webp|gif|bmp)$/iu;
+
+function isAudioFile(file: File) {
+  return file.type.startsWith("audio/") || AUDIO_EXTENSIONS.test(file.name);
+}
+
+function isImageFile(file: File) {
+  return file.type.startsWith("image/") || IMAGE_EXTENSIONS.test(file.name);
 }

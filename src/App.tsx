@@ -7,7 +7,7 @@ import { NeutralSetupWizard } from "./components/SetupWizard";
 import { GeneratePage } from "./pages/GeneratePage";
 import { FavoritesPage } from "./pages/FavoritesPage";
 import { FriendlyVoiceEditorStandalone, VoicesPage } from "./pages/VoicesPage";
-import { SettingsPage } from "./pages/SettingsPage";
+import { SettingsPage, type SettingsTab } from "./pages/SettingsPage";
 import { LicensePage } from "./pages/LicensePage";
 
 function App() {
@@ -144,8 +144,14 @@ function AppShell({
 }) {
   const [ttsStatus, setTtsStatus] = useState<TtsStatus | null>(null);
   const [serverBusy, setServerBusy] = useState(false);
+  const [settingsTabRequest, setSettingsTabRequest] = useState<{ tab: SettingsTab; at: number } | null>(null);
+  function openSettingsTab(tab: SettingsTab) {
+    setSettingsTabRequest({ tab, at: Date.now() });
+    setPage("settings");
+  }
   const active = navItems.find((item) => item.page === page) ?? navItems[0];
   async function refreshStatus() {
+    if (!isTauriRuntime()) return;
     try {
       setTtsStatus(await call<TtsStatus>("get_tts_status"));
     } catch (error) {
@@ -241,23 +247,21 @@ function AppShell({
     <div className="app-shell">
       <aside className="sidebar">
         <div className="brand-lockup">
-          <span className="brand-mark">i</span>
-          <div>
-            <b>IrodoriStudio</b>
-            <small>ローカル音声生成</small>
-          </div>
+          <b>IRODORI/ST</b>
+          <small>ローカル音声生成</small>
         </div>
-        <div className="sidebar-kicker">メニュー</div>
         <nav className="nav-list" aria-label="メインメニュー">
-          {navItems.map((item) => (
+          {navItems.map((item, index) => (
             <button
               key={item.page}
               className={`nav-item ${item.page === page ? "active" : ""}`}
               onClick={() => setPage(item.page)}
             >
-              <span className="nav-icon">{item.icon}</span>
-              <span>{item.label}</span>
-              {item.page === page && <i />}
+              <span className="nav-index">{String(index + 1).padStart(2, "0")}</span>
+              <span className="nav-label">
+                {item.label}
+                <small>{item.detail}</small>
+              </span>
             </button>
           ))}
         </nav>
@@ -271,6 +275,7 @@ function AppShell({
             </div>
             <StatusRow
               label="音声生成サーバー"
+              readyLabel="接続済み"
               state={serviceState(ttsStatus)}
               detail={ttsStatus?.message ?? "状態を確認しています"}
             />
@@ -284,35 +289,40 @@ function AppShell({
               </button>
             )}
           </div>
-          <div className="portable-card">
+          <button
+            className="portable-card"
+            title="保存場所を確認する"
+            onClick={() => openSettingsTab("app")}
+          >
             <div>
               <span className={`status-dot ${state.environment.writable ? "ready" : "error"}`} />{" "}
               データの保存場所
             </div>
-            <small>アプリフォルダ内 · {state.environment.writable ? "書き込み可能" : "確認が必要"}</small>
-          </div>
+            <small>{state.environment.writable ? "書き込み可能" : "確認が必要"} · クリックで確認</small>
+          </button>
           <small className="version">IrodoriStudio v1.21 · Windows x64</small>
         </div>
       </aside>
       <main className="main-content">
         <header className="topbar">
-          <div>
-            <span className="eyebrow">{active.detail}</span>
-            <h1>{active.label}</h1>
-          </div>
+          <span className="topbar-index">{String(navItems.indexOf(active) + 1).padStart(2, "0")}</span>
+          <h1>{active.label}</h1>
+          <span className="topbar-detail">{active.detail}</span>
           <div className="top-actions">
+            <span className="top-lamp">
+              <span className={`lamp ${serviceState(ttsStatus)}`} />
+              {ttsStatus?.healthy ? "SERVER READY" : ttsStatus?.running ? "SERVER STARTING" : "SERVER OFF"}
+            </span>
             <button className="icon-button" aria-label="画面を再読み込み" onClick={() => void onRefresh()}>
               ↻
             </button>
-            <span className="model-pill">
-              <span className="status-dot ready" /> 外部送信なし
-            </span>
           </div>
         </header>
         <div className="page-body">
-          {page === "generate" && (
+          {/* 台本・選んだ声・生成結果を残すため、音声生成ページは隠すだけで破棄しない */}
+          <div hidden={page !== "generate"}>
             <GeneratePage voices={voices} ttsStatus={ttsStatus} onNotice={handleGenerationNotice} />
-          )}
+          </div>
           {page === "favorites" && <FavoritesPage onNotice={onNotice} />}
           {page === "voices" && <VoicesPage voices={voices} setVoices={setVoices} onNotice={onNotice} />}
           {page === "settings" && (
@@ -321,6 +331,7 @@ function AppShell({
               ttsStatus={ttsStatus}
               setTtsStatus={setTtsStatus}
               onNotice={onNotice}
+              tabRequest={settingsTabRequest}
             />
           )}
           {page === "license" && <LicensePage />}

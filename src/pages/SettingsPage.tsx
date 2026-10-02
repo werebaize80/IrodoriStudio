@@ -229,20 +229,28 @@ export function ModelSelector({
   );
 }
 
+export type SettingsTab = "model" | "server" | "diagnostics" | "app";
+
 export function SettingsPage({
   state,
   ttsStatus,
   setTtsStatus,
   onNotice,
+  tabRequest,
 }: {
   state: AppState;
   ttsStatus: TtsStatus | null;
   setTtsStatus: (status: TtsStatus) => void;
   onNotice: (notice: Notice) => void;
+  /** 他の画面から特定のタブを開くための指示。`at` が変わるたびに切り替える */
+  tabRequest?: { tab: SettingsTab; at: number } | null;
 }) {
   const [config, setConfig] = useState<TtsConfig | null>(null);
   const [installedModels, setInstalledModels] = useState<string[]>([]);
-  const [tab, setTab] = useState<"model" | "server" | "diagnostics" | "app">("model");
+  const [tab, setTab] = useState<SettingsTab>(tabRequest?.tab ?? "model");
+  useEffect(() => {
+    if (tabRequest) setTab(tabRequest.tab);
+  }, [tabRequest?.at]);
   const [busy, setBusy] = useState(false);
   const [hfQuery, setHfQuery] = useState("phasefield-audio/Irodori-TTS-v4.1-Anime");
   const [hfResults, setHfResults] = useState<HuggingFaceModel[] | null>(null);

@@ -86,9 +86,8 @@ export function NeutralSetupWizard({
     <div className="setup-screen">
       <div className="setup-panel">
         <div className="setup-brand">
-          <span className="brand-mark">i</span>
           <div>
-            <b>IrodoriStudio</b>
+            <b>IRODORI/ST</b>
             <small>初回セットアップ</small>
           </div>
         </div>

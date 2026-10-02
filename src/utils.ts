@@ -115,6 +115,16 @@ export function analyzeText(text: string): Segment[] {
   });
 }
 
+/**
+ * 文章中の位置 `offset` を含む行が、analyzeText で何番目の区間に当たるかを返す。
+ * 区間は空行を除いた行単位なので、その行より前にある空でない行の数がそのまま番号になる。
+ */
+export function segmentIndexAt(text: string, offset: number) {
+  const lines = text.slice(0, offset).split(/\r?\n/u);
+  lines.pop();
+  return lines.filter((line) => line.trim()).length;
+}
+
 export function serviceState(status: TtsStatus | null): ServiceState {
   if (!status) return "warning";
   if (status.healthy) return "ready";
@@ -213,4 +223,68 @@ export function fileToData(file: File) {
     reader.onerror = () => reject(reader.error);
     reader.readAsDataURL(file);
   });
+}
+
+/**
+ * WAV（base64）から波形表示用のピーク値（0〜1）を求める。
+ * Irodori-TTSの出力は16bit PCMだが、32bit floatにも対応する。読めない形式は空配列を返す。
+ */
+export function wavPeaks(base64: string | null, bars: number): number[] {
+  if (!base64) return [];
+  try {
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+    const view = new DataView(bytes.buffer);
+    let offset = 12;
+    let format = 0;
+    let channels = 1;
+    let bits = 16;
+    while (offset + 8 <= view.byteLength) {
+      const id = String.fromCharCode(...bytes.subarray(offset, offset + 4));
+      const size = view.getUint32(offset + 4, true);
+      const body = offset + 8;
+      if (id === "fmt ") {
+        format = view.getUint16(body, true);
+        channels = view.getUint16(body + 2, true);
+        bits = view.getUint16(body + 14, true);
+      } else if (id === "data") {
+        const bytesPerSample = bits / 8;
+        const frameSize = bytesPerSample * channels;
+        const frames = Math.floor(Math.min(size, view.byteLength - body) / frameSize);
+        const perBar = Math.max(1, Math.floor(frames / bars));
+        const read =
+          format === 3 && bits === 32
+            ? (at: number) => view.getFloat32(at, true)
+            : bits === 16
+              ? (at: number) => view.getInt16(at, true) / 32768
+              : null;
+        if (!read) return [];
+        const peaks: number[] = [];
+        for (let bar = 0; bar < bars; bar += 1) {
+          let peak = 0;
+          const start = bar * perBar;
+          // 1本あたり最大256点だけ調べれば、長い音声でも表示は十分正確
+          const step = Math.max(1, Math.floor(perBar / 256));
+          for (let frame = start; frame < Math.min(start + perBar, frames); frame += step) {
+            peak = Math.max(peak, Math.abs(read(body + frame * frameSize)));
+          }
+          peaks.push(Math.min(1, peak));
+        }
+        return peaks;
+      }
+      offset = body + size + (size % 2);
+    }
+  } catch {
+    /* 壊れたデータは波形なしで表示する */
+  }
+  return [];
+}
+
+export function formatSeconds(value: number | null | undefined) {
+  if (value == null || !Number.isFinite(value)) return "--:--";
+  const total = Math.max(0, Math.round(value * 10) / 10);
+  const minutes = Math.floor(total / 60);
+  const seconds = (total % 60).toFixed(1).padStart(4, "0");
+  return `${minutes}:${seconds}`;
 }

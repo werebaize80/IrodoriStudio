@@ -57,12 +57,12 @@ export const EMOJI_PALETTE: EmojiTag[] = [
   ["👃", "嗅ぐ音", "匂いを嗅ぐ音"],
   ["📖", "朗読", "ナレーション"],
 ].map(([emoji, name, description]) => ({ emoji, name, description, supported: true }));
-export const navItems: { page: Page; icon: string; label: string; detail: string }[] = [
-  { page: "generate", icon: "◈", label: "音声生成", detail: "文章から音声を作成" },
-  { page: "favorites", icon: "★", label: "お気に入り", detail: "保存した音声" },
-  { page: "voices", icon: "◉", label: "ボイス管理", detail: "声の設定と参照音声" },
-  { page: "settings", icon: "⚙", label: "設定", detail: "モデル・サーバー・環境確認" },
-  { page: "license", icon: "▤", label: "ライセンス", detail: "利用条件と第三者通知" },
+export const navItems: { page: Page; label: string; detail: string }[] = [
+  { page: "generate", label: "音声生成", detail: "文章から音声を作成" },
+  { page: "favorites", label: "お気に入り", detail: "保存した音声" },
+  { page: "voices", label: "ボイス管理", detail: "声の設定と参照音声" },
+  { page: "settings", label: "設定", detail: "モデル・サーバー・環境確認" },
+  { page: "license", label: "ライセンス", detail: "利用条件と第三者通知" },
 ];
 export const MODEL_FAMILIES: ModelFamily[] = [
   {
