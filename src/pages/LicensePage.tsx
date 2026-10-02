@@ -2,15 +2,16 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 
 export function LicensePage() {
   const entries = [
+    ["IrodoriStudio", "MIT", "licenses/IrodoriStudio-LICENSE.txt"],
     ["Irodori-TTS", "MIT", "https://github.com/Aratako/Irodori-TTS"],
     ["Irodori-TTS-Server", "MIT", "https://github.com/Aratako/Irodori-TTS-Server"],
-    ["Irodori-TTS-v4.1-Small", "モデル利用条件", "https://huggingface.co/Aratako/Irodori-TTS-v4.1-Small"],
-    [
-      "Semantic-DACVAE-Japanese-32dim",
-      "モデル利用条件",
-      "https://huggingface.co/Aratako/Semantic-DACVAE-Japanese-32dim",
-    ],
-    ["SilentCipher", "upstream LICENSEを参照", "https://github.com/SesameAILabs/silentcipher"],
+    ["Irodori-TTS-v4.1-Anime", "MIT", "https://huggingface.co/phasefield-audio/Irodori-TTS-v4.1-Anime"],
+    ["Irodori-TTS-v4.1-Small", "MIT", "https://huggingface.co/Aratako/Irodori-TTS-v4.1-Small"],
+    ["Semantic-DACVAE-Japanese-32dim", "MIT", "https://huggingface.co/Aratako/Semantic-DACVAE-Japanese-32dim"],
+    ["DACVAE", "Apache-2.0", "https://github.com/facebookresearch/dacvae"],
+    ["SilentCipher", "MIT", "https://github.com/SesameAILabs/silentcipher"],
+    ["uv", "MIT / Apache-2.0", "https://github.com/astral-sh/uv"],
+    ["FFmpeg 9.0.2（gyan.dev essentials build）", "GPL v3", "https://www.gyan.dev/ffmpeg/builds/"],
     ["PyTorch / Transformers / FastAPI", "各公式利用条件を参照", "https://pytorch.org/"],
   ];
   return (

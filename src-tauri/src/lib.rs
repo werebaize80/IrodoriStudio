@@ -24,6 +24,9 @@ const CREATE_NO_WINDOW: u32 = 0x08000000;
 // 起動中のサーバーを終了させない。build_server_commandのモデル読み込み上限と合わせる。
 const SERVER_START_TIMEOUT: Duration = Duration::from_secs(900);
 const UV_VERSION: &str = "0.12.9";
+// Astral公式の .sha256 と一致することを確認済み（uv-x86_64-pc-windows-msvc.zip）
+const UV_ZIP_SHA256: &str = "ddbfcee1ac615a0499f6aa97b5ec8ebdf3ee4a7714a48055ec2ba0030e3cf810";
+const UV_ZIP_SIZE: u64 = 16_895_034;
 const IRODORI_TTS_REVISION: &str = "8224dafb46d0aba89209a8f905f1cb7e3299d9c1";
 const IRODORI_SERVER_REVISION: &str = "841fb7c6ec57729c56b9b75c0ef2562249b13a10";
 const SILENTCIPHER_REVISION: &str = "d46d7d0893a583d8968ab3a6626e2289faec9152";
@@ -35,11 +38,15 @@ const ANIME_QUANTIZED_MODEL: &str = "phasefield-audio/Irodori-TTS-v4.1-Anime/int
 // Anime版はチェックポイント内の長さ推定を使う。既定値のままだと日本語の
 // 長文を短く見積もり、早口化や語句落ちにつながるため余裕を持たせる。
 const ANIME_DURATION_SCALE: f64 = 1.35;
-// BtbNの日付付きautobuildは古いものから削除されるため、名前が変わらない最新版のURLを使う。
+// FFmpegはバージョンを固定し、ハッシュで中身を確認する。
+// gyan.dev の essentials build（GPL v3）を、公式のGitHub配布とgyan.dev本体の2か所から取得できる。
+// 2か所のファイルが同一で、GitHubが記録するSHA-256とも一致することを確認済み。
 const FFMPEG_DOWNLOAD_URLS: [&str; 2] = [
-    "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip",
-    "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip",
+    "https://github.com/GyanD/codexffmpeg/releases/download/9.0.2/ffmpeg-9.0.2-essentials_build.zip",
+    "https://www.gyan.dev/ffmpeg/builds/packages/ffmpeg-9.0.2-essentials_build.zip",
 ];
+const FFMPEG_ZIP_SHA256: &str = "60f467265b1e312373dbcd92200c2618a74850f98d3d078e94296bb3fa2047ba";
+const FFMPEG_ZIP_SIZE: u64 = 114_768_076;
 
 #[derive(Default)]
 pub struct RuntimeState {
@@ -2392,21 +2399,19 @@ fn emit_model_progress(app: Option<&AppHandle>, progress: ModelInstallProgress) 
     }
 }
 
-fn download_zip(url: &str, destination: &Path) -> Result<(), String> {
+fn download_zip(url: &str, destination: &Path, expected: &download::Expected) -> Result<(), String> {
     let client = download::client()?;
-    download::download_file(
-        &client,
-        url,
-        destination,
-        &download::Expected { size: None, sha256: None },
-        &mut |_| {},
-    )
+    download::download_file(&client, url, destination, expected, &mut |_| {})
 }
 
-fn download_zip_with_fallback(urls: &[&str], destination: &Path) -> Result<(), String> {
+fn download_zip_with_fallback(
+    urls: &[&str],
+    destination: &Path,
+    expected: &download::Expected,
+) -> Result<(), String> {
     let mut errors = Vec::new();
     for url in urls {
-        match download_zip(url, destination) {
+        match download_zip(url, destination, expected) {
             Ok(()) => return Ok(()),
             Err(error) => errors.push(error),
         }
@@ -2454,7 +2459,9 @@ fn install_source(
         return copy_dir(root, destination);
     }
     let archive = staging.join(format!("{archive_name}.zip"));
-    download_zip(url, &archive)?;
+    // GitHubが自動生成するソースのzipは、同じコミットでも圧縮結果が変わることがあるため
+    // ハッシュでは固定しない（コミットのハッシュでrevisionを固定している）。
+    download_zip(url, &archive, &download::Expected { size: None, sha256: None })?;
     let extracted = staging.join(archive_name);
     fs::create_dir_all(&extracted).map_err(|error| error.to_string())?;
     extract_zip(&archive, &extracted)?;
@@ -2732,7 +2739,14 @@ fn install_environment_one(
             let url = format!(
                 "https://github.com/astral-sh/uv/releases/download/{UV_VERSION}/uv-x86_64-pc-windows-msvc.zip"
             );
-            download_zip(&url, &archive)?;
+            download_zip(
+                &url,
+                &archive,
+                &download::Expected {
+                    size: Some(UV_ZIP_SIZE),
+                    sha256: Some(UV_ZIP_SHA256),
+                },
+            )?;
             extract_zip(&archive, &runtime)?;
             Ok(InstallResult {
                 component,
@@ -2773,7 +2787,14 @@ fn install_environment_one(
                 });
             }
             let archive = staging.join("ffmpeg.zip");
-            download_zip_with_fallback(&FFMPEG_DOWNLOAD_URLS, &archive)?;
+            download_zip_with_fallback(
+                &FFMPEG_DOWNLOAD_URLS,
+                &archive,
+                &download::Expected {
+                    size: Some(FFMPEG_ZIP_SIZE),
+                    sha256: Some(FFMPEG_ZIP_SHA256),
+                },
+            )?;
             extract_zip(&archive, &runtime)?;
             if find_file_recursive(&runtime, "ffmpeg.exe").is_none() {
                 return Err("FFmpegの展開後にffmpeg.exeが見つかりません。".to_string());
@@ -2847,6 +2868,8 @@ fn install_environment_one(
                 let mut command = Command::new(&uv);
                 command.args([
                     "sync",
+                    // uv.lock のバージョンとハッシュどおりに入れる。ロックとずれていたら作り直さずに止める
+                    "--locked",
                     "--project",
                     server_project.to_string_lossy().as_ref(),
                     "--extra",
@@ -3044,6 +3067,26 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 固定したハッシュで実際に取得できること、改ざんされたファイルは弾くことを確認する。
+    /// ネットワークを使うため通常は実行しない（cargo test -- --ignored）。
+    #[test]
+    #[ignore]
+    fn pinned_uv_download_is_verified_and_tampering_is_rejected() {
+        let dir = env::temp_dir().join(format!("irodori-uv-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let url = format!(
+            "https://github.com/astral-sh/uv/releases/download/{UV_VERSION}/uv-x86_64-pc-windows-msvc.zip"
+        );
+        let good = download::Expected { size: Some(UV_ZIP_SIZE), sha256: Some(UV_ZIP_SHA256) };
+        download_zip(&url, &dir.join("uv.zip"), &good).unwrap();
+        let wrong = UV_ZIP_SHA256.replacen('d', "e", 1);
+        let tampered = download::Expected { size: Some(UV_ZIP_SIZE), sha256: Some(&wrong) };
+        let error = download_zip(&url, &dir.join("uv-bad.zip"), &tampered).unwrap_err();
+        assert!(error.contains("SHA-256"), "{error}");
+        assert!(!dir.join("uv-bad.zip").exists(), "rejected file must not be kept");
+        let _ = fs::remove_dir_all(dir);
+    }
 
     #[test]
     fn hf_checkpoint_source_splits_quantized_variant() {

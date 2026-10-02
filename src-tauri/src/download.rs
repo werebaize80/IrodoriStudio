@@ -11,6 +11,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 const MAX_ATTEMPTS: u32 = 6;
+/// 中身（サイズ・SHA-256）の不一致は、この回数で打ち切る。
+const MAX_CONTENT_MISMATCHES: u32 = 2;
 const BUFFER_SIZE: usize = 1024 * 1024;
 
 /// ダウンロード用のHTTPクライアント。
@@ -90,6 +92,7 @@ pub fn download_file(
     }
     let partial = partial_path(destination);
     let mut last_error = String::new();
+    let mut mismatches = 0;
     for attempt in 0..MAX_ATTEMPTS {
         if attempt > 0 {
             std::thread::sleep(Duration::from_secs(2_u64.pow(attempt.min(4))));
@@ -106,7 +109,14 @@ pub fn download_file(
         }
         if let Err(error) = verify(&partial, expected) {
             // 中身が壊れている場合は続きから取っても直らないため、最初から取り直す。
+            // ただし2回続けて一致しないなら配布元のファイル自体が違うので、通信を無駄にせず中止する。
             let _ = fs::remove_file(&partial);
+            mismatches += 1;
+            if mismatches >= MAX_CONTENT_MISMATCHES {
+                return Err(format!(
+                    "{url}: ダウンロードしたファイルが想定と異なるため中止しました。{error}"
+                ));
+            }
             last_error = error;
             continue;
         }

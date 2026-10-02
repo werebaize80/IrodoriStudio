@@ -1,27 +1,48 @@
 IrodoriStudio Third-Party Notices
 
-IrodoriStudioは、ローカル音声生成のためにIrodori-TTSおよびIrodori-TTS-Serverを利用します。
-licenses/Irodori-TTS-LICENSE.txt と licenses/Irodori-TTS-Server-LICENSE.txt は、開発時に確認したupstream LICENSE本文のコピーです。
-このファイルはライセンス本文の代替ではありません。モデルやPython依存パッケージを追加取得する場合は、取得したrevisionの利用条件も確認してください。
+IrodoriStudio本体はMITライセンスです（licenses/IrodoriStudio-LICENSE.txt）。
+IrodoriStudioは下記のソフトウェアとモデルを利用します。これらはアプリに同梱せず、初回セットアップで
+利用者のPCへ各配布元から直接ダウンロードします。各ライセンス本文は配布元で確認してください。
+licenses/ には、開発時に確認したIrodori-TTS / Irodori-TTS-ServerのLICENSE本文のコピーを同梱しています。
 
-開発時に確認したソースrevision:
-- Irodori-TTS: 8224dafb46d0aba89209a8f905f1cb7e3299d9c1
-- Irodori-TTS-Server: 841fb7c6ec57729c56b9b75c0ef2562249b13a10
-- DACVAE: 414c20785fc3a28373073ea8ef7a1316eeeaca6e
-- SilentCipher: d46d7d0893a583d8968ab3a6626e2289faec9152
-- uv: 0.12.9
-- Irodori-TTS-v4.1-Small: 2b28324dc263ed5e6638b3cf3dd94c82ead07b4b
-- Irodori-TTS-v4.1-Small-Quantized: ef04e6c3ba56138ae23e86a2eabc004f76990e37
+■ 取得するもの・ライセンス・取得時の確認方法
 
-初回セットアップでは、上記のソースrevisionとuvのバージョンを固定して取得します。
-FFmpegは固定版を優先し、取得できない場合のみ互換用の代替配布元を使用します。
+- uv 0.12.9（MIT / Apache-2.0）
+  https://github.com/astral-sh/uv
+  確認: サイズとSHA-256を固定（公式の .sha256 と一致することを確認済み）
 
-主な配布元:
-- https://github.com/Aratako/Irodori-TTS
-- https://github.com/Aratako/Irodori-TTS-Server
-- https://huggingface.co/Aratako/Irodori-TTS-v4.1-Small
-- https://huggingface.co/Aratako/Irodori-TTS-v4.1-Small-Quantized
-- https://huggingface.co/Aratako/Semantic-DACVAE-Japanese-32dim
-- https://github.com/SesameAILabs/silentcipher
+- Python 3.10（Python Software Foundation License）
+  uv が取得します。取得時の確認は uv が行います。
 
-アプリの初回セットアップが取得したrevision、取得元、同梱有無は設定・ログへ記録します。
+- Irodori-TTS（MIT） revision 8224dafb46d0aba89209a8f905f1cb7e3299d9c1
+  https://github.com/Aratako/Irodori-TTS
+- Irodori-TTS-Server（MIT） revision 841fb7c6ec57729c56b9b75c0ef2562249b13a10
+  https://github.com/Aratako/Irodori-TTS-Server
+- DACVAE（Apache-2.0） revision 414c20785fc3a28373073ea8ef7a1316eeeaca6e
+  https://github.com/facebookresearch/dacvae
+- SilentCipher（MIT） revision d46d7d0893a583d8968ab3a6626e2289faec9152
+  https://github.com/SesameAILabs/silentcipher
+  確認: コミットのrevisionを固定して取得します。GitHubが自動生成するzipは同じコミットでも
+  圧縮結果が変わることがあるため、zip自体のハッシュは固定していません。
+
+- Python依存パッケージ（PyTorch、Transformers、FastAPIなど。各パッケージの利用条件に従います）
+  確認: Irodori-TTS-Serverの uv.lock に記録されたバージョンとハッシュで uv が検証します。
+
+- FFmpeg 9.0.2 essentials build（GPL v3。gyan.dev によるWindows向けビルド）
+  https://github.com/GyanD/codexffmpeg/releases/tag/9.0.2
+  https://www.gyan.dev/ffmpeg/builds/
+  確認: サイズとSHA-256を固定（2つの配布元のファイルが同一で、GitHubの記録とも一致することを確認済み）
+
+- 音声モデル（いずれもMIT）
+  - Irodori-TTS-v4.1-Anime  https://huggingface.co/phasefield-audio/Irodori-TTS-v4.1-Anime
+  - Irodori-TTS-v4.1-Small  https://huggingface.co/Aratako/Irodori-TTS-v4.1-Small
+  - Semantic-DACVAE-Japanese-32dim  https://huggingface.co/Aratako/Semantic-DACVAE-Japanese-32dim
+  確認: Hugging Faceが公開するSHA-256でファイルごとに検証します。取得したコミットとファイルの
+  ハッシュは、各モデルフォルダの .irodori-model.json に記録します。
+  設定画面から追加したモデルは、そのモデルの配布ページに記載された利用条件に従います。
+
+■ 準備済みのフォルダを再配布する場合
+
+初回セットアップ後のフォルダ（runtime/ など）をそのまま配布すると、上記のソフトウェアを再配布する
+ことになります。特にFFmpeg（GPL v3）を含める場合は、ライセンス本文の同梱と、対応するソースコードの
+入手方法の明示が必要です。アプリ本体（IrodoriStudio.exe）だけを配布する場合はこの対応は不要です。
