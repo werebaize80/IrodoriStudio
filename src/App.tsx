@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
+import { ask } from "@tauri-apps/plugin-dialog";
 import type { AppState, Notice, Page, TtsConfig, TtsStatus, Voice } from "./types";
 import { NOTICE_VERSION, navItems } from "./constants";
+import { version as appVersion } from "../package.json";
 import { call, errorText, isTauriRuntime, isUnsupportedCudaKernel, serviceState } from "./utils";
-import { StatusRow, Toast } from "./components/common";
+import { Toast } from "./components/common";
 import { NeutralSetupWizard } from "./components/SetupWizard";
 import { GeneratePage } from "./pages/GeneratePage";
 import { FavoritesPage } from "./pages/FavoritesPage";
@@ -118,7 +120,6 @@ function App() {
         page={page}
         setPage={setPage}
         onNotice={setNotice}
-        onRefresh={load}
       />
       <Toast notice={notice} onClose={() => setNotice(null)} />
     </>
@@ -132,7 +133,6 @@ function AppShell({
   page,
   setPage,
   onNotice,
-  onRefresh,
 }: {
   state: AppState;
   voices: Voice[];
@@ -140,7 +140,6 @@ function AppShell({
   page: Page;
   setPage: (page: Page) => void;
   onNotice: (notice: Notice) => void;
-  onRefresh: () => Promise<void>;
 }) {
   const [ttsStatus, setTtsStatus] = useState<TtsStatus | null>(null);
   const [serverBusy, setServerBusy] = useState(false);
@@ -158,18 +157,34 @@ function AppShell({
       onNotice({ kind: "warning", title: "サーバー状態を取得できません", body: errorText(error) });
     }
   }
-  async function startServer() {
-    if (serverBusy || ttsStatus?.healthy) return;
+  /** 停止中なら起動し、起動中・稼働中なら確認してから再起動する（右上のボタン） */
+  async function startOrRestartServer() {
+    if (serverBusy) return;
+    const restart = Boolean(ttsStatus?.running);
+    if (
+      restart &&
+      !(await ask("音声生成サーバーを再起動します。生成中の処理は中断されます。", {
+        title: "サーバーの再起動",
+        kind: "warning",
+        okLabel: "再起動",
+        cancelLabel: "キャンセル",
+      }))
+    )
+      return;
     setServerBusy(true);
     try {
-      const next = await call<TtsStatus>("start_tts");
+      const next = await call<TtsStatus>(restart ? "restart_tts" : "start_tts");
       setTtsStatus(next);
-      onNotice({ kind: "success", title: "サーバーを起動しました", body: next.message });
+      onNotice({
+        kind: "success",
+        title: restart ? "サーバーを再起動しました" : "サーバーを起動しました",
+        body: next.message,
+      });
     } catch (error) {
       const detail = errorText(error);
       onNotice({
         kind: "error",
-        title: "サーバーを起動できません",
+        title: restart ? "サーバーを再起動できません" : "サーバーを起動できません",
         body: detail.includes("準備してください")
           ? "環境確認で必要な項目を準備してください。"
           : "サーバーが起動できませんでした。設定画面の環境診断でログを確認してください。",
@@ -266,29 +281,6 @@ function AppShell({
           ))}
         </nav>
         <div className="sidebar-bottom">
-          <div className="service-card">
-            <div className="service-heading">
-              <span>アプリ内サービス</span>
-              <button aria-label="サーバー状態を更新" onClick={() => void refreshStatus()}>
-                ↻
-              </button>
-            </div>
-            <StatusRow
-              label="音声生成サーバー"
-              readyLabel="接続済み"
-              state={serviceState(ttsStatus)}
-              detail={ttsStatus?.message ?? "状態を確認しています"}
-            />
-            {!ttsStatus?.healthy && (
-              <button
-                className="service-start"
-                onClick={() => void startServer()}
-                disabled={serverBusy || Boolean(ttsStatus?.running)}
-              >
-                {serverBusy ? "起動しています…" : ttsStatus?.running ? "起動中です…" : "▶ サーバーを起動"}
-              </button>
-            )}
-          </div>
           <button
             className="portable-card"
             title="保存場所を確認する"
@@ -298,9 +290,10 @@ function AppShell({
               <span className={`status-dot ${state.environment.writable ? "ready" : "error"}`} />{" "}
               データの保存場所
             </div>
-            <small>{state.environment.writable ? "書き込み可能" : "確認が必要"} · クリックで確認</small>
+            <small>{state.environment.writable ? "書き込み可能" : "確認が必要"}</small>
+            <small>クリックで保存場所を確認</small>
           </button>
-          <small className="version">IrodoriStudio v1.21 · Windows x64</small>
+          <small className="version">IrodoriStudio v{appVersion} · Windows x64</small>
         </div>
       </aside>
       <main className="main-content">
@@ -309,12 +302,28 @@ function AppShell({
           <h1>{active.label}</h1>
           <span className="topbar-detail">{active.detail}</span>
           <div className="top-actions">
+            {/* 初回は↻だけだと起動方法が分かりにくいため、停止中だけ目立つ起動ボタンを出す */}
+            {!ttsStatus?.running && (
+              <button
+                className="top-start-button"
+                disabled={serverBusy}
+                onClick={() => void startOrRestartServer()}
+              >
+                {serverBusy ? "起動しています…" : "▶ サーバーを起動"}
+              </button>
+            )}
             <span className="top-lamp">
               <span className={`lamp ${serviceState(ttsStatus)}`} />
               {ttsStatus?.healthy ? "SERVER READY" : ttsStatus?.running ? "SERVER STARTING" : "SERVER OFF"}
             </span>
-            <button className="icon-button" aria-label="画面を再読み込み" onClick={() => void onRefresh()}>
-              ↻
+            <button
+              className={`icon-button server-button ${serverBusy ? "busy" : ""}`}
+              aria-label={ttsStatus?.running ? "サーバーを再起動" : "サーバーを起動"}
+              title={ttsStatus?.running ? "サーバーを再起動" : "サーバーを起動"}
+              disabled={serverBusy}
+              onClick={() => void startOrRestartServer()}
+            >
+              <span>↻</span>
             </button>
           </div>
         </header>

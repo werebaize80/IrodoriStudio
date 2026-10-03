@@ -1356,8 +1356,7 @@ fn status_for(runtime: &RuntimeState, paths: &PortablePaths, config: &TtsConfig)
                             .map(|elapsed| elapsed >= SERVER_START_TIMEOUT)
                             .unwrap_or(false);
                     if timed_out {
-                        let _ = process.child.kill();
-                        let _ = process.child.wait();
+                        kill_process_tree(&mut process.child);
                         clear_owned_process = true;
                         clear_marker = true;
                         startup_timed_out = true;
@@ -1588,6 +1587,20 @@ fn build_server_command(
     Ok((command, executable, args))
 }
 
+/// サーバーを子プロセスごと止める。
+/// 予備の起動方法では uv が Python を起動するため、直接の子だけを止めるとPythonが残ってしまう。
+fn kill_process_tree(child: &mut Child) {
+    #[cfg(target_os = "windows")]
+    {
+        let mut taskkill = Command::new("taskkill");
+        taskkill.args(["/PID", &child.id().to_string(), "/T", "/F"]);
+        taskkill.creation_flags(CREATE_NO_WINDOW);
+        let _ = taskkill.output();
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
 fn stop_process(
     runtime: &RuntimeState,
     paths: &PortablePaths,
@@ -1595,8 +1608,7 @@ fn stop_process(
 ) -> Result<(), String> {
     if let Ok(mut guard) = runtime.process.lock() {
         if let Some(mut process) = guard.take() {
-            let _ = process.child.kill();
-            let _ = process.child.wait();
+            kill_process_tree(&mut process.child);
             let _ = fs::remove_file(managed_marker(paths));
             return Ok(());
         }
@@ -2613,10 +2625,14 @@ fn prepare_portable_dependency_sources(root: &Path, staging: &Path) -> Result<()
         ],
         &["silentcipher = { path = \"../vendor/silentcipher\" }"],
     )?;
-    let lockfile = root.join("server").join("uv.lock");
-    if lockfile.is_file() {
-        fs::remove_file(lockfile).map_err(|error| error.to_string())?;
-    }
+    // 上流の uv.lock はGitHub上の依存を指しており、上の書き換えと合わなくなる。
+    // そのまま削除すると uv がインストールのたびにその日の最新版で解決し直すため、
+    // 書き換え後の構成で作ったロックを同梱し、全員が同じバージョン・ハッシュで入れられるようにする。
+    fs::write(
+        root.join("server").join("uv.lock"),
+        include_str!("../resources/server-uv.lock"),
+    )
+    .map_err(|error| format!("依存関係のロックファイルを書き込めません: {error}"))?;
     Ok(())
 }
 
@@ -3081,6 +3097,83 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 親を止めると、その親が起動した子プロセスも止まることを確認する（uv → Python の構成を想定）。
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn stopping_the_server_also_stops_its_children() {
+        let mut parent = Command::new("cmd")
+            .args(["/C", "ping", "-n", "60", "127.0.0.1"])
+            .stdout(Stdio::null())
+            .spawn()
+            .unwrap();
+        let parent_id = parent.id();
+        let child_alive = || {
+            let output = Command::new("powershell")
+                .args([
+                    "-NoProfile",
+                    "-Command",
+                    &format!(
+                        "@(Get-CimInstance Win32_Process | Where-Object {{ $_.Name -like 'ping*' -and $_.ParentProcessId -eq {} }}).Count",
+                        parent_id
+                    ),
+                ])
+                .output()
+                .unwrap();
+            String::from_utf8_lossy(&output.stdout).trim().parse::<u32>().unwrap_or(0) > 0
+        };
+        std::thread::sleep(Duration::from_millis(1500));
+        assert!(child_alive(), "test setup: ping should be running under cmd");
+        kill_process_tree(&mut parent);
+        std::thread::sleep(Duration::from_millis(500));
+        assert!(!process_exists(parent_id));
+        assert!(!child_alive(), "child process must be stopped together with its parent");
+    }
+
+    /// 新しいPCでの初回セットアップと同じ手順でソースを取得・書き換えし、
+    /// 同梱したロックで `uv sync --locked` が通ることを確認する。
+    /// ネットワークとアプリ内のuvを使うため通常は実行しない（IRODORI_TEST_UV に uv.exe を指定して --ignored）。
+    #[test]
+    #[ignore]
+    fn fresh_sources_install_with_the_bundled_lock() {
+        let uv = PathBuf::from(env::var("IRODORI_TEST_UV").expect("IRODORI_TEST_UV"));
+        let root = env::temp_dir().join(format!("irodori-fresh-{}", Uuid::new_v4()));
+        let staging = root.join("data").join("temp").join("installer");
+        fs::create_dir_all(&staging).unwrap();
+        install_source(
+            &root.join("missing"),
+            &root.join("irodori"),
+            &staging,
+            &format!("Irodori-TTS-{IRODORI_TTS_REVISION}"),
+            &format!("https://github.com/Aratako/Irodori-TTS/archive/{IRODORI_TTS_REVISION}.zip"),
+            "infer.py",
+        )
+        .unwrap();
+        install_source(
+            &root.join("missing"),
+            &root.join("server"),
+            &staging,
+            &format!("Irodori-TTS-Server-{IRODORI_SERVER_REVISION}"),
+            &format!("https://github.com/Aratako/Irodori-TTS-Server/archive/{IRODORI_SERVER_REVISION}.zip"),
+            "pyproject.toml",
+        )
+        .unwrap();
+        prepare_portable_dependency_sources(&root, &staging).unwrap();
+        for extra in ["cpu", "cu128"] {
+            let output = Command::new(&uv)
+                .args(["sync", "--locked", "--dry-run", "--project"])
+                .arg(root.join("server"))
+                .args(["--extra", extra])
+                .env("UV_PROJECT_ENVIRONMENT", root.join("env"))
+                .env("UV_NO_CONFIG", "1")
+                .output()
+                .unwrap();
+            let log = String::from_utf8_lossy(&output.stderr);
+            println!("[{extra}] {}", log.lines().filter(|line| !line.trim().is_empty()).take(4).collect::<Vec<_>>().join(" | "));
+            assert!(output.status.success(), "{extra}: {log}");
+        }
+        let _ = fs::remove_dir_all(root);
+    }
 
     /// 固定したハッシュで実際に取得できること、改ざんされたファイルは弾くことを確認する。
     /// ネットワークを使うため通常は実行しない（cargo test -- --ignored）。

@@ -19,9 +19,7 @@ textarea:focus, input:focus, select:focus { border-color: var(--accent); box-sha
 .nav-item.active { box-shadow: inset 2px 0 var(--accent); }
 .nav-item i { width: 5px; height: 5px; margin-left: auto; border-radius: 50%; background: var(--accent); box-shadow: none; }
 .sidebar-bottom { margin-top: auto; display: grid; gap: 13px; }
-.service-card, .portable-card { padding: 14px; background: #1a1918; border: 1px solid #2e2d2a; border-radius: 6px; }
-.service-heading { display: flex; justify-content: space-between; color: #847b68; font: 500 9px "IBM Plex Mono", monospace; letter-spacing: .12em; }
-.service-heading button { background: transparent; color: #9b9280; font-size: 16px; }
+.portable-card { padding: 14px; background: #1a1918; border: 1px solid #2e2d2a; border-radius: 6px; }
 .status-row { display: flex; align-items: flex-start; gap: 9px; margin-top: 12px; }
 .status-row b { display: block; font-size: 11px; font-weight: 700; }
 .status-row small { display: block; margin-top: 4px; color: var(--muted); font-size: 10px; line-height: 1.4; }
@@ -57,14 +55,6 @@ textarea:focus, input:focus, select:focus { border-color: var(--accent); box-sha
 .toggle { display: flex; align-items: center; gap: 7px; padding: 6px 10px; background: transparent; color: #c4bfb4; border: 1px solid #393734; border-radius: 3px; font-size: 10px; }
 .toggle i { width: 8px; height: 8px; display: block; border-radius: 50%; background: var(--accent); }
 .toggle.on i { background: var(--good); }
-.emoji-tag { display: flex; align-items: center; gap: 9px; min-height: 47px; padding: 6px 8px; background: #1b1a18; border: 1px solid #3a3834; border-radius: 4px; }
-.emoji-tag.unsupported { border-color: rgba(242,198,121,.44); }
-.emoji-tag > span { width: 30px; font-size: 21px; text-align: center; }
-.emoji-tag div { flex: 1; min-width: 0; }
-.emoji-tag b, .emoji-tag small { display: block; }
-.emoji-tag b { font-size: 11px; }
-.emoji-tag small { margin-top: 2px; color: var(--muted); font-size: 9px; }
-.emoji-tag button { width: 20px; height: 22px; background: transparent; color: #a19988; font-size: 15px; }
 .palette { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 7px; max-height: 250px; margin-top: 16px; padding-top: 15px; overflow: auto; border-top: 1px solid #33322f; }
 .palette-label { grid-column: 1/-1; color: var(--dim); font: 10px "IBM Plex Mono", monospace; }
 .palette-item { min-height: 49px; display: grid; grid-template-columns: 29px 1fr; grid-template-rows: auto auto; align-items: center; column-gap: 6px; padding: 6px 7px; text-align: left; background: #191817; border: 1px solid #33322f; border-radius: 4px; }
@@ -255,7 +245,6 @@ body { font-size: 16px; overflow-x: hidden; }
 .brand-lockup small, .setup-brand small { font-size: 11px; }
 .section-label { font-size: 12px; }
 .nav-item { min-height: 50px; font-size: 15px; }
-.service-heading { font-size: 11px; }
 .status-row b { font-size: 13px; }
 .status-row small { font-size: 12px; }
 .portable-card { font-size: 13px; }
@@ -286,9 +275,6 @@ body { font-size: 16px; overflow-x: hidden; }
 .setup-note p { font-size: 12px; }
 .notice-scroll { font-size: 13px; }
 .notice-check { font-size: 13px; }
-.service-start { width: 100%; min-height: 36px; margin-top: 13px; padding: 0 10px; color: #181716; background: #e7a23c; border-radius: 4px; font-size: 12px; font-weight: 800; }
-.service-start:hover:not(:disabled) { filter: brightness(1.08); }
-.service-start:disabled { color: #c0baae; background: #272623; border: 1px solid #3d3b37; opacity: .8; }
 .emoji-reorder-toggle { position: absolute; top: 12px; right: 12px; display: inline-flex; align-items: center; gap: 7px; min-height: 28px; padding: 4px 7px 4px 9px; color: var(--muted); background: #191817; border: 1px solid #3c3a36; border-radius: 3px; font-size: 11px; }
 .emoji-palette-toolbar .emoji-reorder-toggle { position: static; top: auto; right: auto; margin-left: auto; }
 .emoji-reorder-toggle i { position: relative; display: block; width: 24px; height: 14px; background: #595651; border-radius: 3px; transition: background .15s ease; }

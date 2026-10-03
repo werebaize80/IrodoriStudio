@@ -28,7 +28,7 @@ Windows 10/11 x64向けの、[Irodori-TTS](https://github.com/Aratako/Irodori-TT
 | --- | --- |
 | uv（Pythonの実行管理ツール） | バージョンを固定し、公式が公開するSHA-256と照合 |
 | FFmpeg（音声変換） | バージョンを固定し、SHA-256と照合 |
-| Python依存パッケージ（PyTorchなど） | `uv.lock` に記録されたバージョンとハッシュで照合 |
+| Python依存パッケージ（PyTorchなど） | アプリに同梱した `uv.lock` のバージョンとハッシュで照合（どのPCでも同じバージョン） |
 | Irodori-TTS / Server などのソース | コミットを固定して取得 |
 | 音声モデル | Hugging Faceが公開するSHA-256でファイルごとに照合 |
 

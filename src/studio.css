@@ -134,25 +134,11 @@ select:focus {
   background: #121110;
 }
 
-.service-card,
 .portable-card {
   padding: 12px;
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 2px;
-}
-
-.service-heading {
-  color: var(--dim);
-  font: 500 11px var(--mono);
-  letter-spacing: 0.06em;
-}
-
-.service-start {
-  border-radius: 2px;
-  color: var(--accent-ink);
-  background: var(--accent);
-  font-weight: 700;
 }
 
 .version {
@@ -268,6 +254,7 @@ select:focus {
 }
 
 .page-body {
+  max-width: none; /* 広いウィンドウでは中央の列だけを広げ、右の列は固定幅のまま右端に置く */
   padding: 20px 24px 40px;
 }
 
@@ -527,7 +514,7 @@ select:focus {
 /* 絵文字パレット：小さなキーを並べ、スクロールなしで全部見せる */
 .expression-editor .emoji-palette {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(116px, 1fr));
   gap: 3px;
   max-height: none;
   margin: 0;
@@ -1141,4 +1128,46 @@ button.portable-card:hover {
 .drop-overlay small {
   color: var(--muted);
   font-size: 13px;
+}
+
+/* ---------- 右上のサーバー起動・再起動ボタン ---------- */
+
+.server-button:hover:not(:disabled) {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.server-button span {
+  display: inline-block;
+}
+
+.server-button.busy span {
+  animation: server-spin 1s linear infinite;
+}
+
+@keyframes server-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.top-start-button {
+  min-height: 30px;
+  padding: 0 14px;
+  color: var(--accent-ink);
+  background: var(--accent);
+  border-radius: 2px;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.top-start-button:hover:not(:disabled) {
+  background: #f0b04f;
+}
+
+.top-start-button:disabled {
+  color: var(--muted);
+  background: #2b2925;
+  opacity: 1;
 }

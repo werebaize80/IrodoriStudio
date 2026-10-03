@@ -26,7 +26,8 @@ licenses/ には、開発時に確認したIrodori-TTS / Irodori-TTS-ServerのLI
   圧縮結果が変わることがあるため、zip自体のハッシュは固定していません。
 
 - Python依存パッケージ（PyTorch、Transformers、FastAPIなど。各パッケージの利用条件に従います）
-  確認: Irodori-TTS-Serverの uv.lock に記録されたバージョンとハッシュで uv が検証します。
+  確認: アプリに同梱した uv.lock（Irodori-TTS-Serverのロックを、このアプリの構成に合わせて作り直し
+  固定したもの）に記録されたバージョンとハッシュで uv が検証します。どのPCでも同じバージョンが入ります。
 
 - FFmpeg 9.0.2 essentials build（GPL v3。gyan.dev によるWindows向けビルド）
   https://github.com/GyanD/codexffmpeg/releases/tag/9.0.2

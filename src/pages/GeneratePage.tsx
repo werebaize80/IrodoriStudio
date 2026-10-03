@@ -275,7 +275,7 @@ export function GeneratePage({
         title: "サーバーの準備が完了していません",
         body: ttsStatus?.running
           ? "サーバーと音声モデルの準備が終わるまで待ってください。"
-          : "設定画面または左下のボタンからサーバーを起動してください。",
+          : "右上の↻ボタンからサーバーを起動してください。",
         detail: ttsStatus?.message ?? "サーバーの状態を確認しています。",
       });
     const items = segments.length ? segments : analyzeText(text);
@@ -425,7 +425,7 @@ export function GeneratePage({
               : !ready
                 ? ttsStatus?.running
                   ? "サーバーの起動を待っています"
-                  : "サーバーが停止中です。左下から起動できます"
+                  : "サーバーが停止中です。右上の↻ボタンから起動できます"
                 : stopRequested
                   ? `停止しました（${doneCount}区間を生成）`
                   : `${segments.length}区間を順番に生成します`}
