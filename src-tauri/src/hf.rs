@@ -232,6 +232,62 @@ const KNOWN_MODULES: [&str; 13] = [
     "text_encoder",
     "text_norm",
 ];
+/// 同梱のIrodori-TTS（IRODORI_TTS_REVISION）が読み込めるモデル設定（config_json）の項目。
+/// irodori_tts/config.py の ModelConfig の全項目と、inference_runtime.py が生成用に受け付ける4項目。
+/// これ以外の項目があると読み込み時に「Unknown keys」で失敗する。revisionを上げたら作り直すこと。
+const KNOWN_CONFIG_KEYS: [&str; 51] = [
+    "latent_dim",
+    "latent_patch_size",
+    "model_dim",
+    "num_layers",
+    "num_heads",
+    "mlp_ratio",
+    "text_mlp_ratio",
+    "speaker_mlp_ratio",
+    "dropout",
+    "text_vocab_size",
+    "text_tokenizer_repo",
+    "text_encoder_revision",
+    "text_add_bos",
+    "text_encoder_type",
+    "pretrained_projector_type",
+    "pretrained_projector_hidden_ratio",
+    "pretrained_projector_dropout",
+    "text_dim",
+    "text_layers",
+    "text_heads",
+    "use_caption_condition",
+    "use_speaker_condition",
+    "caption_vocab_size",
+    "caption_tokenizer_repo",
+    "caption_add_bos",
+    "caption_dim",
+    "caption_layers",
+    "caption_heads",
+    "caption_mlp_ratio",
+    "speaker_dim",
+    "speaker_layers",
+    "speaker_heads",
+    "speaker_patch_size",
+    "timestep_embed_dim",
+    "adaln_rank",
+    "norm_eps",
+    "use_duration_predictor",
+    "duration_aux_dim",
+    "duration_hidden_dim",
+    "duration_layers",
+    "duration_dropout",
+    "duration_attention_heads",
+    "duration_architecture",
+    "duration_token_init_frames",
+    "duration_speaker_fusion",
+    "duration_caption_fusion",
+    "duration_caption_pooling",
+    "max_text_len",
+    "max_caption_len",
+    "fixed_target_latent_steps",
+    "ref_max_seconds",
+];
 /// Irodori-TTSのモデルなら必ず持つモジュール。
 const REQUIRED_MODULES: [&str; 5] = ["blocks", "cond_module", "in_proj", "out_proj", "text_encoder"];
 
@@ -258,6 +314,23 @@ fn check_compatibility(header: &Map<String, Value>) -> Result<(), String> {
         return Err(format!(
             "Irodori-TTSの派生モデルで、このアプリの音声生成プログラムには無い機能（{}）を使っています。",
             unknown.join(", ")
+        ));
+    }
+    let config = header
+        .get("__metadata__")
+        .and_then(|metadata| metadata.get("config_json"))
+        .and_then(Value::as_str)
+        .and_then(|text| serde_json::from_str::<Map<String, Value>>(text).ok())
+        .ok_or("Irodori-TTS用のモデルではありません。")?;
+    let unknown_settings = config
+        .keys()
+        .filter(|key| !KNOWN_CONFIG_KEYS.contains(&key.as_str()))
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    if !unknown_settings.is_empty() {
+        return Err(format!(
+            "このアプリの音声生成プログラムより新しい形式のモデルで、読み込めない設定（{}）があります。",
+            unknown_settings.join(", ")
         ));
     }
     Ok(())
@@ -461,6 +534,23 @@ mod tests {
     }
 
     #[test]
+    fn newer_config_formats_are_rejected_before_download() {
+        let mut newer = header(&KNOWN_MODULES, false);
+        newer.insert(
+            "__metadata__".to_string(),
+            json!({ "config_json": "{\"model_dim\":2048,\"flow_parameterization\":\"rf_velocity\"}" }),
+        );
+        assert!(check_compatibility(&newer).unwrap_err().contains("flow_parameterization"));
+
+        let mut current = header(&KNOWN_MODULES, false);
+        current.insert(
+            "__metadata__".to_string(),
+            json!({ "config_json": "{\"model_dim\":1280,\"max_text_len\":256,\"ref_max_seconds\":120.0}" }),
+        );
+        assert!(check_compatibility(&current).is_ok());
+    }
+
+    #[test]
     fn forks_and_other_models_are_rejected() {
         let image_conditioned = header(
             &["blocks", "character_encoder", "cond_module", "in_proj", "out_norm", "out_proj", "text_encoder", "text_norm"],
@@ -513,6 +603,24 @@ mod network_tests {
         )
         .unwrap();
         assert!(check_compatibility(&other).is_err());
+    }
+
+    #[test]
+    #[ignore]
+    fn real_models_are_judged_like_the_bundled_irodori_tts() {
+        let client = download::client().unwrap();
+        for (repo, path, expected) in [
+            ("phasefield-audio/Irodori-TTS-v4.1-Anime", "model.safetensors", true),
+            ("Aratako/Irodori-TTS-v4.1-Small", "model.safetensors", true),
+            ("Aratako/Irodori-TTS-v4-Large", "model.safetensors", false),
+            ("Aratako/Irodori-TTS-v4-Large-Quantized", "int8-weight-only/model.safetensors", false),
+            ("Aratako/Irodori-TTS-v4.1-Small-MF", "model.safetensors", false),
+        ] {
+            let header = fetch_safetensors_header(&client, &resolve_url(repo, "main", path)).unwrap();
+            let result = check_compatibility(&header);
+            println!("{repo}/{path}: {:?}", result);
+            assert_eq!(result.is_ok(), expected, "{repo}");
+        }
     }
 
     #[test]
