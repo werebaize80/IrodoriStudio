@@ -11,7 +11,7 @@ import type {
   TtsStatus,
 } from "../types";
 import { MODEL_FAMILIES } from "../constants";
-import { call, errorText, formatBytes, pathLabel, serviceState } from "../utils";
+import { call, errorText, explainError, formatBytes, pathLabel, serviceState } from "../utils";
 import { DiagLine, StatusRow } from "../components/common";
 import { AutoInstallPanel } from "../components/InstallPanel";
 
@@ -37,7 +37,7 @@ export function FriendlyDiagnosticsPage({
       onNotice({
         kind: "error",
         title: "インストールに失敗しました",
-        body: "インターネット接続と空き容量を確認してください。",
+        body: explainError(errorText(error)),
         detail: errorText(error),
       });
     } finally {
@@ -426,7 +426,7 @@ export function SettingsPage({
       onNotice({
         kind: "error",
         title: "音声モデルを導入できません",
-        body: "インターネット接続と空き容量を確認してください。",
+        body: explainError(errorText(error)),
         detail: errorText(error),
       });
     } finally {

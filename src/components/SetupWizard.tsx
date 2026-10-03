@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { AppState, EnvironmentInfo, Notice } from "../types";
 import { CLONING_NOTICE, INSTALL_LABELS, INSTALL_ORDER, NOTICE_VERSION } from "../constants";
-import { call, errorText } from "../utils";
+import { call, errorText, explainError } from "../utils";
 import { EnvTile } from "./common";
 import { AutoInstallPanel } from "./InstallPanel";
 
@@ -74,7 +74,7 @@ export function NeutralSetupWizard({
       onNotice({
         kind: "error",
         title: "インストールに失敗しました",
-        body: "インターネット接続と空き容量を確認してください。",
+        body: explainError(errorText(error)),
         detail: errorText(error),
       });
       return false;

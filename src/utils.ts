@@ -288,3 +288,50 @@ export function formatSeconds(value: number | null | undefined) {
   const seconds = (total % 60).toFixed(1).padStart(4, "0");
   return `${minutes}:${seconds}`;
 }
+
+/**
+ * エラーの詳細から、利用者向けの説明（原因と対処）を選ぶ。
+ * 当てはまる原因が分からないときは決めつけず、詳細を確認するよう案内する。
+ */
+export function explainError(detail: string): string {
+  const text = detail.toLowerCase();
+  const rules: [RegExp, string][] = [
+    [
+      /unknown keys in 'checkpoint model_config'|新しい形式のモデル/u,
+      "このモデルは、アプリの音声生成プログラムより新しい形式のため読み込めません。設定 → モデルで別のモデルを選んでください。",
+    ],
+    [
+      // 詳細には「モデルの精度: bf16」という設定情報も入るため、エラー本体の文言だけで判定する
+      /unsupported precision|precision='bf16' currently requires|bf16 is not supported|bfloat16 is not supported/u,
+      "選んだ精度はこのPCでは使えません。設定 → モデルで精度を fp32 にしてください。",
+    ],
+    [
+      /out of memory|outofmemoryerror|cuda error: out of memory/u,
+      "GPUのメモリ（VRAM）が足りません。量子化モデルを使うか、他のアプリを閉じてからもう一度試してください。",
+    ],
+    [/no space left|errno 28|os error 112|ディスクに十分な空き領域がありません/u, "保存先のドライブの空き容量が足りません。不要なファイルを削除してから、もう一度実行してください。"],
+    [
+      /sha-256不一致|サイズが一致しません|想定と異なるため中止/u,
+      "ダウンロードしたファイルが壊れているか、配布元のファイルと一致しませんでした。もう一度実行してください。",
+    ],
+    [
+      /access is denied|アクセスが拒否|permission denied|os error 5\b|being used by another process|別のプロセスが使用中/u,
+      "ファイルにアクセスできませんでした。アプリを置いたフォルダに書き込めるか、セキュリティソフトがブロックしていないか確認してください。",
+    ],
+    [
+      /lockfile|uv\.lock|no solution found|failed to (?:build|prepare)|because .* depends on/u,
+      "必要な部品（Pythonパッケージ）の準備で問題が起きました。エラー報告をコピーして開発者に送ってください。",
+    ],
+    // サーバーへの接続失敗にも「error sending request」が含まれるため、通信エラーより先に判定する
+    [
+      /connection refused|serverへ接続できない|音声生成サーバーに接続できません|actively refused/u,
+      "音声生成サーバーに接続できません。右上の「サーバーを起動」から起動してください。",
+    ],
+    [
+      /dns|name or service not known|could not resolve|timed out|connection reset|connect error|error sending request|ダウンロードに失敗|通信が途切れ|接続できません: /u,
+      "インターネットに接続できないか、通信が途中で切れました。接続を確認して、もう一度実行してください（途中までのダウンロードは再開されます）。",
+    ],
+  ];
+  const matched = rules.find(([pattern]) => pattern.test(text));
+  return matched ? matched[1] : "原因は下の詳細に表示しています。解決しない場合は「エラー報告をコピー」して開発者に送ってください。";
+}

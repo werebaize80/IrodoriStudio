@@ -5,6 +5,7 @@ import {
   analyzeText,
   call,
   errorText,
+  explainError,
   moveEmojiInOrder,
   normalizeEmojiOrder,
   nowLabel,
@@ -301,7 +302,7 @@ export function GeneratePage({
       onNotice({
         kind: "error",
         title: "音声を生成できませんでした",
-        body: "サーバーが起動しているか、必要な環境が準備されているか確認してください。",
+        body: explainError(errorText(error)),
         detail: errorText(error),
       });
     } finally {

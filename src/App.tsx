@@ -3,7 +3,7 @@ import { ask } from "@tauri-apps/plugin-dialog";
 import type { AppState, Notice, Page, TtsConfig, TtsStatus, Voice } from "./types";
 import { NOTICE_VERSION, navItems } from "./constants";
 import { version as appVersion } from "../package.json";
-import { call, errorText, isTauriRuntime, isUnsupportedCudaKernel, serviceState } from "./utils";
+import { call, errorText, explainError, isTauriRuntime, isUnsupportedCudaKernel, serviceState } from "./utils";
 import { Toast } from "./components/common";
 import { NeutralSetupWizard } from "./components/SetupWizard";
 import { GeneratePage } from "./pages/GeneratePage";
@@ -187,7 +187,7 @@ function AppShell({
         title: restart ? "サーバーを再起動できません" : "サーバーを起動できません",
         body: detail.includes("準備してください")
           ? "環境確認で必要な項目を準備してください。"
-          : "サーバーが起動できませんでした。設定画面の環境診断でログを確認してください。",
+          : explainError(detail),
         detail,
       });
     } finally {
