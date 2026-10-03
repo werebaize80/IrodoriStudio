@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ask } from "@tauri-apps/plugin-dialog";
 import type { AppState, Notice, Page, TtsConfig, TtsStatus, Voice } from "./types";
 import { NOTICE_VERSION, navItems } from "./constants";
@@ -257,6 +257,28 @@ function AppShell({
     void refreshStatus();
     const timer = window.setInterval(() => void refreshStatus(), 2500);
     return () => window.clearInterval(timer);
+  }, []);
+  // 「アプリ起動時にサーバーを自動起動」が有効なら、アプリを開いたときに1回だけ起動する。
+  // 必要な部品がそろっていない間は、起動しても失敗するだけなので何もしない。
+  const autoStartTried = useRef(false);
+  useEffect(() => {
+    // 開発時のStrictModeなどで2回呼ばれても、起動を試みるのは1回だけにする
+    if (!isTauriRuntime() || autoStartTried.current) return;
+    autoStartTried.current = true;
+    const ready = (state.environment.components ?? []).every((item) => !item.required || item.installed);
+    if (!ready) return;
+    void (async () => {
+      try {
+        const [config, status] = await Promise.all([
+          call<TtsConfig>("get_tts_config"),
+          call<TtsStatus>("get_tts_status"),
+        ]);
+        setTtsStatus(status);
+        if (config.autoStart && !status.running) await startOrRestartServer();
+      } catch {
+        /* 状態を取得できない場合は、右上のボタンから手動で起動できる */
+      }
+    })();
   }, []);
   return (
     <div className="app-shell">

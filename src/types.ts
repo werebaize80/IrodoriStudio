@@ -64,6 +64,7 @@ export type TtsConfig = {
   schedule: string;
   swayCoefficient: number;
   autoStart: boolean;
+  autoStartMigrated?: boolean;
   stopOnExit: boolean;
 };
 export type TtsStatus = {

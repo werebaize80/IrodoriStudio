@@ -148,6 +148,10 @@ struct TtsConfig {
     schedule: String,
     sway_coefficient: f32,
     auto_start: bool,
+    /// 自動起動の設定が実際に動くようになった（2.0.4）ことを反映済みか。
+    /// それ以前は設定が効いておらず、保存されている false は旧初期値のままのため一度だけ true にする。
+    #[serde(default)]
+    auto_start_migrated: bool,
     stop_on_exit: bool,
     #[serde(default)]
     emoji_palette_order: Vec<String>,
@@ -714,7 +718,8 @@ fn default_tts_config() -> Result<TtsConfig, String> {
         codec_device: "auto".to_string(),
         schedule: "linear".to_string(),
         sway_coefficient: -1.0,
-        auto_start: false,
+        auto_start: true,
+        auto_start_migrated: true,
         stop_on_exit: true,
         emoji_palette_order: Vec::new(),
     })
@@ -772,6 +777,16 @@ fn normalize_device_selection(config: &mut TtsConfig) -> bool {
     changed
 }
 
+/// 自動起動が効いていなかった頃の設定（false）を一度だけ true にする。以降の利用者の選択はそのまま使う。
+fn migrate_auto_start(config: &mut TtsConfig) -> bool {
+    if config.auto_start_migrated {
+        return false;
+    }
+    config.auto_start = true;
+    config.auto_start_migrated = true;
+    true
+}
+
 fn read_tts_config(paths: &PortablePaths) -> Result<TtsConfig, String> {
     let mut config = load_json(&json_path(paths, "settings.json"))
         .and_then(|value| value.map_or_else(default_tts_config, Ok))?;
@@ -779,6 +794,7 @@ fn read_tts_config(paths: &PortablePaths) -> Result<TtsConfig, String> {
     let mut changed = rebase_portable_config_paths(&mut config, &root);
     changed |= normalize_model_revision(&mut config);
     changed |= normalize_device_selection(&mut config);
+    changed |= migrate_auto_start(&mut config);
     let configured = PathBuf::from(&config.python_path);
     let portable_env = root.join("runtime").join("env");
     if configured.is_file() && path_is_within(&configured, &portable_env) {
@@ -3099,6 +3115,26 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn auto_start_is_turned_on_once_for_old_settings() {
+        let mut old: TtsConfig = serde_json::from_value({
+            let mut value = serde_json::to_value(default_tts_config().unwrap()).unwrap();
+            value.as_object_mut().unwrap().remove("autoStartMigrated");
+            value["autoStart"] = json!(false);
+            value
+        })
+        .unwrap();
+        assert!(migrate_auto_start(&mut old));
+        assert!(old.auto_start);
+        // 切り替え後に利用者がオフにした場合は、そのまま尊重する
+        old.auto_start = false;
+        assert!(!migrate_auto_start(&mut old));
+        assert!(!old.auto_start);
+        // 画面から保存し直しても、切り替え済みの記録が残る
+        let saved: TtsConfig = serde_json::from_value(serde_json::to_value(&old).unwrap()).unwrap();
+        assert!(saved.auto_start_migrated);
+    }
 
     /// 親を止めると、その親が起動した子プロセスも止まることを確認する（uv → Python の構成を想定）。
     #[cfg(target_os = "windows")]
