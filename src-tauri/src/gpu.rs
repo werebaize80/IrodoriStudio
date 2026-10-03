@@ -31,6 +31,12 @@ impl CudaSupport {
         matches!(self, CudaSupport::Supported(_))
     }
 
+    /// bf16で計算できるか。PyTorchのbf16はAmpere（RTX 30系、Compute Capability 8.0）以降が対象。
+    /// 世代が分からない場合は、読み込みに失敗しないよう対応していないものとして扱う。
+    pub fn supports_bf16(&self) -> bool {
+        matches!(self, CudaSupport::Supported(gpu) if gpu.compute_capability.is_some_and(|cc| cc >= (8, 0)))
+    }
+
     pub fn summary(&self) -> String {
         match self {
             CudaSupport::Supported(gpu) => format!("{}（ドライバ {}）", gpu.name, gpu.driver),
@@ -127,6 +133,14 @@ mod tests {
     #[test]
     fn missing_compute_capability_relies_on_driver_only() {
         assert!(classify("NVIDIA GeForce RTX 2060, 560.94").is_supported());
+    }
+
+    #[test]
+    fn bf16_needs_ampere_or_newer() {
+        assert!(classify("NVIDIA GeForce RTX 3060, 576.02, 8.6").supports_bf16());
+        assert!(!classify("NVIDIA GeForce RTX 2080, 576.02, 7.5").supports_bf16());
+        assert!(!classify("NVIDIA GeForce RTX 2060, 560.94").supports_bf16());
+        assert!(!CudaSupport::NotFound.supports_bf16());
     }
 
     #[test]

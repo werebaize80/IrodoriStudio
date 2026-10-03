@@ -445,6 +445,8 @@ export function SettingsPage({
         設定を読み込んでいます…
       </div>
     );
+  // bf16はRTX 30系以降のGPUでのみ動き、CPUでは使えない（選ぶとモデルを読み込めなくなる）
+  const bf16Usable = Boolean(state.environment.bf16Supported) && config.modelDevice !== "cpu";
   const progress =
     modelProgress && modelProgress.model === (modelInstalling ? hfQuery.trim() : modelProgress.model)
       ? modelProgress
@@ -570,9 +572,10 @@ export function SettingsPage({
                   value={config.modelPrecision}
                   onChange={(event) => update("modelPrecision", event.target.value)}
                 >
-                  <option>fp32</option>
-                  <option>bf16</option>
-                  <option>int8</option>
+                  <option value="fp32">fp32</option>
+                  <option value="bf16" disabled={!bf16Usable}>
+                    bf16{bf16Usable ? "" : "（このPCでは使えません）"}
+                  </option>
                 </select>
               </label>
               <label className="field-label">
@@ -581,15 +584,29 @@ export function SettingsPage({
                   value={config.codecPrecision}
                   onChange={(event) => update("codecPrecision", event.target.value)}
                 >
-                  <option>fp32</option>
-                  <option>bf16</option>
+                  <option value="fp32">fp32</option>
+                  <option value="bf16" disabled={!bf16Usable}>
+                    bf16{bf16Usable ? "" : "（このPCでは使えません）"}
+                  </option>
                 </select>
               </label>
               <label className="field-label">
                 使用する機器
                 <select
                   value={config.modelDevice}
-                  onChange={(event) => update("modelDevice", event.target.value)}
+                  onChange={(event) => {
+                    // CPUではbf16を使えないため、切り替えたら精度もfp32に戻す
+                    const device = event.target.value;
+                    setConfig((current) =>
+                      current
+                        ? {
+                            ...current,
+                            modelDevice: device,
+                            ...(device === "cpu" ? { modelPrecision: "fp32", codecPrecision: "fp32" } : {}),
+                          }
+                        : current,
+                    );
+                  }}
                 >
                   <option>auto</option>
                   <option>cuda</option>
@@ -597,6 +614,12 @@ export function SettingsPage({
                 </select>
               </label>
             </div>
+            {!bf16Usable && (
+              <p className="muted">
+                bf16はRTX 30系以降のGPUで使えます。
+                {config.modelDevice === "cpu" ? "使用する機器がCPUのため選べません。" : "このPCのGPUは対応していないため選べません。"}
+              </p>
+            )}
             <button className="button primary" onClick={() => void saveConfig()} disabled={busy}>
               設定を保存
             </button>

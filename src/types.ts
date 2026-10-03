@@ -24,6 +24,8 @@ export type EnvironmentInfo = {
   cpu: string;
   gpu: string;
   cudaAvailable: boolean;
+  /** bf16で計算できるGPUがあるか（RTX 30系以降） */
+  bf16Supported?: boolean;
   python: string;
   uv: string;
   ffmpeg: string;

@@ -93,6 +93,8 @@ struct EnvironmentInfo {
     cpu: String,
     gpu: String,
     cuda_available: bool,
+    /// bf16で計算できるGPUがあるか（RTX 30系以降）
+    bf16_supported: bool,
     python: String,
     uv: String,
     ffmpeg: String,
@@ -787,6 +789,22 @@ fn migrate_auto_start(config: &mut TtsConfig) -> bool {
     true
 }
 
+/// サーバーが受け付けない精度を fp32 に直す。変更したら true を返す。
+/// Irodori-TTSが扱えるのは fp32 と bf16 だけで、bf16 はAmpere以降のGPUでのみ動く
+/// （CPUや古いGPUで選ぶと、最初の生成でモデルを読み込めず失敗する）。
+fn enforce_supported_precision(config: &mut TtsConfig, bf16_supported: bool) -> bool {
+    let bf16_usable = bf16_supported && !config.model_device.eq_ignore_ascii_case("cpu");
+    let mut changed = false;
+    for precision in [&mut config.model_precision, &mut config.codec_precision] {
+        let allowed = precision == "fp32" || (precision == "bf16" && bf16_usable);
+        if !allowed {
+            *precision = "fp32".to_string();
+            changed = true;
+        }
+    }
+    changed
+}
+
 fn read_tts_config(paths: &PortablePaths) -> Result<TtsConfig, String> {
     let mut config = load_json(&json_path(paths, "settings.json"))
         .and_then(|value| value.map_or_else(default_tts_config, Ok))?;
@@ -988,6 +1006,7 @@ fn environment_info(root: &Path) -> EnvironmentInfo {
         cpu: env::var("PROCESSOR_IDENTIFIER").unwrap_or_else(|_| "Windows CPU".to_string()),
         gpu: cuda.summary(),
         cuda_available,
+        bf16_supported: cuda.supports_bf16(),
         python: if python_installed {
             python_path.to_string_lossy().into_owned()
         } else {
@@ -2009,6 +2028,7 @@ fn save_tts_config(mut config: TtsConfig) -> Result<TtsConfig, String> {
     normalize_model_revision(&mut config);
     normalize_device_selection(&mut config);
     let paths = ensure_directories()?;
+    enforce_supported_precision(&mut config, cuda_support(&PathBuf::from(&paths.root)).supports_bf16());
     save_json(&json_path(&paths, "settings.json"), &config)?;
     Ok(config)
 }
@@ -2060,6 +2080,10 @@ fn start_tts(runtime: State<'_, RuntimeState>) -> Result<TtsStatus, String> {
             "サーバーを起動するために、次の項目を準備してください: {}。設定画面の「環境確認」から準備できます。",
             missing.join("、")
         ));
+    }
+    let mut config = config;
+    if enforce_supported_precision(&mut config, cuda_support(&root).supports_bf16()) {
+        save_json(&json_path(&paths, "settings.json"), &config)?;
     }
     let (mut command, executable, args) = build_server_command(&root, &paths, &config)?;
     let child = command
@@ -3115,6 +3139,25 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unsupported_precisions_fall_back_to_fp32() {
+        let mut config = default_tts_config().unwrap();
+        config.model_precision = "int8".to_string();
+        config.codec_precision = "bf16".to_string();
+        config.model_device = "auto".to_string();
+        assert!(enforce_supported_precision(&mut config, false));
+        assert_eq!((config.model_precision.as_str(), config.codec_precision.as_str()), ("fp32", "fp32"));
+
+        config.model_precision = "bf16".to_string();
+        config.codec_precision = "bf16".to_string();
+        assert!(!enforce_supported_precision(&mut config, true), "Ampere以降ならbf16のまま");
+        assert_eq!(config.model_precision, "bf16");
+
+        config.model_device = "cpu".to_string();
+        assert!(enforce_supported_precision(&mut config, true), "CPUではbf16を使えない");
+        assert_eq!(config.model_precision, "fp32");
+    }
 
     #[test]
     fn auto_start_is_turned_on_once_for_old_settings() {
