@@ -52,9 +52,6 @@ textarea:focus, input:focus, select:focus { border-color: var(--accent); box-sha
 .button.small { min-height: 30px; padding: 0 10px; font-size: 11px; }
 .button.wide { width: 100%; margin-top: 24px; }
 .button-row { display: flex; align-items: center; gap: 10px; }
-.toggle { display: flex; align-items: center; gap: 7px; padding: 6px 10px; background: transparent; color: #c4bfb4; border: 1px solid #393734; border-radius: 3px; font-size: 10px; }
-.toggle i { width: 8px; height: 8px; display: block; border-radius: 50%; background: var(--accent); }
-.toggle.on i { background: var(--good); }
 .palette { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 7px; max-height: 250px; margin-top: 16px; padding-top: 15px; overflow: auto; border-top: 1px solid #33322f; }
 .palette-label { grid-column: 1/-1; color: var(--dim); font: 10px "IBM Plex Mono", monospace; }
 .palette-item { min-height: 49px; display: grid; grid-template-columns: 29px 1fr; grid-template-rows: auto auto; align-items: center; column-gap: 6px; padding: 6px 7px; text-align: left; background: #191817; border: 1px solid #33322f; border-radius: 4px; }
@@ -253,7 +250,6 @@ body { font-size: 16px; overflow-x: hidden; }
 .page-intro p { font-size: 14px; }
 .card-heading h2, .page-intro h2 { font-size: 21px; }
 .button { font-size: 14px; }
-.toggle { font-size: 12px; }
 .field-label { font-size: 13px; }
 .field-label input, .field-label textarea, .field-label select { font-size: 15px; }
 .result-meta { font-size: 11px; }

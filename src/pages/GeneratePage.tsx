@@ -198,7 +198,6 @@ export function GeneratePage({
   const [generations, setGenerations] = useState<Generation[]>([]);
   const [busy, setBusy] = useState(false);
   const [stopRequested, setStopRequested] = useState(false);
-  const [manualMode, setManualMode] = useState(false);
   // 生成中の区間と、今回の実行で生成し終えた区間数（生成リストの状態表示に使う）
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
   const [doneCount, setDoneCount] = useState(0);
@@ -213,11 +212,6 @@ export function GeneratePage({
     saveDraftText(value);
     setSegments(analyzeText(value));
     setSelectedSegment(0);
-  }
-  function toggleMode() {
-    const next = !manualMode;
-    setManualMode(next);
-    if (!next) setSegments(analyzeText(text));
   }
   function addEmoji(tag: EmojiTag) {
     const textarea = textareaRef.current;
@@ -361,9 +355,6 @@ export function GeneratePage({
             <span className="deck-note">話してほしい文章。改行ごとに1区間として生成します</span>
             <div className="deck-tools">
               <span className="mono">{text.length.toLocaleString("ja-JP")}字</span>
-              <button className={`toggle ${manualMode ? "on" : ""}`} onClick={toggleMode}>
-                <i /> {manualMode ? "手動編集" : "自動解析"}
-              </button>
               <button className="text-button" onClick={() => updateText("")}>
                 クリア
               </button>

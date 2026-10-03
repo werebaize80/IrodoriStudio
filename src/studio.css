@@ -420,29 +420,6 @@ select:focus {
   box-shadow: inset 0 0 0 1px var(--accent);
 }
 
-.toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0;
-  color: var(--muted);
-  background: transparent;
-  font-size: 12px;
-}
-
-.toggle i {
-  width: 24px;
-  height: 12px;
-  border: 1px solid var(--line-strong);
-  border-radius: 1px;
-  background: linear-gradient(90deg, var(--line-strong) 0 45%, transparent 45%);
-}
-
-.toggle.on i {
-  border-color: var(--accent);
-  background: linear-gradient(90deg, transparent 55%, var(--accent) 55%);
-}
-
 .track-list {
   max-height: 244px;
   margin: 0;
