@@ -7,11 +7,8 @@ Windows 10/11 x64向けの、[Irodori-TTS](https://github.com/Aratako/Irodori-TT
 
 初回セットアップで大量にダウンロードするからだろうけど、インストーラー版（exe）はGeneric ML PUA (PUA)で検出されたけどポータブル（zip）は検出されてないから気になる人はそっち使って（そもそもそっちの方が楽ちん）
 
-ポータブル版
-https://www.virustotal.com/gui/file/528f0f575be6aa380c88a0de6271c7f574af6a4af513ec98da801fd16335e595?nocache=1
-
-インストーラー
-https://www.virustotal.com/gui/file/5c41e66f52452be5d76bb4cbcbdeb97784b9ac5269ce6c5039464163e6a942fb?nocache=1
+ポータブル版（zip）
+https://www.virustotal.com/gui/file/6c578d79ebb400e7f640ec5b92d7cf6d11b49f62bb7fc6adf3b9ced719322547?nocache=1
 
 ## 安心して使っていただくために
 
