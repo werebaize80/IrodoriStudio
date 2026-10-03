@@ -217,11 +217,12 @@ fn fetch_safetensors_header(client: &Client, url: &str) -> Result<Map<String, Va
 /// 同梱しているIrodori-TTS（IRODORI_TTS_REVISION）のモデルが持つ最上位モジュール。
 /// 読み込みはstrictなload_state_dictのため、これ以外のモジュールを含む派生モデル
 /// （画像で条件付けするものや、新しい版の機能を使うものなど）は読み込めない。
-const KNOWN_MODULES: [&str; 13] = [
+const KNOWN_MODULES: [&str; 14] = [
     "blocks",
     "caption_encoder",
     "caption_norm",
     "cond_module",
+    "delta_cond_module",
     "duration_predictor",
     "in_proj",
     "out_norm",
@@ -235,7 +236,8 @@ const KNOWN_MODULES: [&str; 13] = [
 /// 同梱のIrodori-TTS（IRODORI_TTS_REVISION）が読み込めるモデル設定（config_json）の項目。
 /// irodori_tts/config.py の ModelConfig の全項目と、inference_runtime.py が生成用に受け付ける4項目。
 /// これ以外の項目があると読み込み時に「Unknown keys」で失敗する。revisionを上げたら作り直すこと。
-const KNOWN_CONFIG_KEYS: [&str; 51] = [
+const KNOWN_CONFIG_KEYS: [&str; 52] = [
+    "flow_parameterization",
     "latent_dim",
     "latent_patch_size",
     "model_dim",
@@ -538,9 +540,9 @@ mod tests {
         let mut newer = header(&KNOWN_MODULES, false);
         newer.insert(
             "__metadata__".to_string(),
-            json!({ "config_json": "{\"model_dim\":2048,\"flow_parameterization\":\"rf_velocity\"}" }),
+            json!({ "config_json": "{\"model_dim\":2048,\"future_option\":true}" }),
         );
-        assert!(check_compatibility(&newer).unwrap_err().contains("flow_parameterization"));
+        assert!(check_compatibility(&newer).unwrap_err().contains("future_option"));
 
         let mut current = header(&KNOWN_MODULES, false);
         current.insert(
@@ -556,10 +558,8 @@ mod tests {
             &["blocks", "character_encoder", "cond_module", "in_proj", "out_norm", "out_proj", "text_encoder", "text_norm"],
             true,
         );
-        let mean_flow = header(&[&KNOWN_MODULES[..], &["delta_cond_module"]].concat(), true);
         let unrelated = header(&["encoder", "pooler"], false);
         assert!(check_compatibility(&image_conditioned).unwrap_err().contains("character_encoder"));
-        assert!(check_compatibility(&mean_flow).unwrap_err().contains("delta_cond_module"));
         assert!(check_compatibility(&unrelated).is_err());
     }
 }
@@ -612,9 +612,9 @@ mod network_tests {
         for (repo, path, expected) in [
             ("phasefield-audio/Irodori-TTS-v4.1-Anime", "model.safetensors", true),
             ("Aratako/Irodori-TTS-v4.1-Small", "model.safetensors", true),
-            ("Aratako/Irodori-TTS-v4-Large", "model.safetensors", false),
-            ("Aratako/Irodori-TTS-v4-Large-Quantized", "int8-weight-only/model.safetensors", false),
-            ("Aratako/Irodori-TTS-v4.1-Small-MF", "model.safetensors", false),
+            ("Aratako/Irodori-TTS-v4-Large", "model.safetensors", true),
+            ("Aratako/Irodori-TTS-v4-Large-Quantized", "int8-weight-only/model.safetensors", true),
+            ("Aratako/Irodori-TTS-v4.1-Small-MF", "model.safetensors", true),
         ] {
             let header = fetch_safetensors_header(&client, &resolve_url(repo, "main", path)).unwrap();
             let result = check_compatibility(&header);

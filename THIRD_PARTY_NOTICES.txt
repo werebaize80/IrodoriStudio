@@ -14,9 +14,9 @@ licenses/ には、開発時に確認したIrodori-TTS / Irodori-TTS-ServerのLI
 - Python 3.10（Python Software Foundation License）
   uv が取得します。取得時の確認は uv が行います。
 
-- Irodori-TTS（MIT） revision 8224dafb46d0aba89209a8f905f1cb7e3299d9c1
+- Irodori-TTS（MIT） revision 89f9d8fbd4d51ea019867ee1197725ede1df13c5
   https://github.com/Aratako/Irodori-TTS
-- Irodori-TTS-Server（MIT） revision 841fb7c6ec57729c56b9b75c0ef2562249b13a10
+- Irodori-TTS-Server（MIT） revision 61012c760f22f7b4a6c21c5c5f8f9e148120b6f9
   https://github.com/Aratako/Irodori-TTS-Server
 - DACVAE（Apache-2.0） revision 414c20785fc3a28373073ea8ef7a1316eeeaca6e
   https://github.com/facebookresearch/dacvae

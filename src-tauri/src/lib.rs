@@ -27,8 +27,8 @@ const UV_VERSION: &str = "0.12.9";
 // Astral公式の .sha256 と一致することを確認済み（uv-x86_64-pc-windows-msvc.zip）
 const UV_ZIP_SHA256: &str = "ddbfcee1ac615a0499f6aa97b5ec8ebdf3ee4a7714a48055ec2ba0030e3cf810";
 const UV_ZIP_SIZE: u64 = 16_895_034;
-const IRODORI_TTS_REVISION: &str = "8224dafb46d0aba89209a8f905f1cb7e3299d9c1";
-const IRODORI_SERVER_REVISION: &str = "841fb7c6ec57729c56b9b75c0ef2562249b13a10";
+const IRODORI_TTS_REVISION: &str = "89f9d8fbd4d51ea019867ee1197725ede1df13c5";
+const IRODORI_SERVER_REVISION: &str = "61012c760f22f7b4a6c21c5c5f8f9e148120b6f9";
 const SILENTCIPHER_REVISION: &str = "d46d7d0893a583d8968ab3a6626e2289faec9152";
 const DACVAE_REVISION: &str = "414c20785fc3a28373073ea8ef7a1316eeeaca6e";
 const ORIGINAL_MODEL_REVISION: &str = "2b28324dc263ed5e6638b3cf3dd94c82ead07b4b";
@@ -986,18 +986,14 @@ fn environment_info(root: &Path) -> EnvironmentInfo {
     let uv_path = root.join("runtime").join("uv.exe");
     let ffmpeg_path = find_file_recursive(&root.join("runtime"), "ffmpeg.exe");
     let python_path = find_python(root, &server_root, &irodori_root);
-    let sources_installed = irodori_root.join("infer.py").is_file()
-        && server_root.join("pyproject.toml").is_file()
-        && root
-            .join("vendor")
-            .join("silentcipher")
-            .join("pyproject.toml")
-            .is_file()
-        && root
-            .join("vendor")
-            .join("dacvae")
-            .join("setup.py")
-            .is_file();
+    let sources_installed = source_is_current(&irodori_root, "infer.py", IRODORI_TTS_REVISION)
+        && source_is_current(&server_root, "pyproject.toml", IRODORI_SERVER_REVISION)
+        && source_is_current(
+            &root.join("vendor").join("silentcipher"),
+            "pyproject.toml",
+            SILENTCIPHER_REVISION,
+        )
+        && source_is_current(&root.join("vendor").join("dacvae"), "setup.py", DACVAE_REVISION);
     let python_installed = python_path.is_file();
     let dependencies_installed = has_dependencies(root, &server_root, &irodori_root);
     EnvironmentInfo {
@@ -2531,6 +2527,17 @@ fn extract_zip(zip_path: &Path, destination: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// 取得したソースのコミットを記録するファイル。固定バージョンを上げたときに、既存の環境を取り直すために使う。
+const SOURCE_REVISION_FILE: &str = ".irodori-source-revision";
+
+/// `destination` に、目印のファイルがあり、記録されたrevisionが `revision` と一致するか。
+fn source_is_current(destination: &Path, marker: &str, revision: &str) -> bool {
+    destination.join(marker).is_file()
+        && fs::read_to_string(destination.join(SOURCE_REVISION_FILE))
+            .map(|text| text.trim() == revision)
+            .unwrap_or(false)
+}
+
 fn install_source(
     root: &Path,
     destination: &Path,
@@ -2538,10 +2545,28 @@ fn install_source(
     archive_name: &str,
     url: &str,
     marker: &str,
+    revision: &str,
 ) -> Result<(), String> {
-    if destination.join(marker).is_file() {
+    if source_is_current(destination, marker, revision) {
         return Ok(());
     }
+    // 古いバージョン（または記録のない以前の形式）は、混ざらないよう消してから取り直す
+    if destination.exists() {
+        fs::remove_dir_all(destination)
+            .map_err(|error| format!("古い{}を削除できません: {error}", destination.display()))?;
+    }
+    install_source_files(root, destination, staging, archive_name, url, marker)?;
+    fs::write(destination.join(SOURCE_REVISION_FILE), revision).map_err(|error| error.to_string())
+}
+
+fn install_source_files(
+    root: &Path,
+    destination: &Path,
+    staging: &Path,
+    archive_name: &str,
+    url: &str,
+    marker: &str,
+) -> Result<(), String> {
     if root.join(marker).is_file() && root != destination {
         return copy_dir(root, destination);
     }
@@ -2643,6 +2668,7 @@ fn prepare_portable_dependency_sources(root: &Path, staging: &Path) -> Result<()
         &silentcipher_archive,
         &silentcipher_url,
         "pyproject.toml",
+        SILENTCIPHER_REVISION,
     )?;
     let dacvae_archive = format!("dacvae-{DACVAE_REVISION}");
     let dacvae_url =
@@ -2654,6 +2680,7 @@ fn prepare_portable_dependency_sources(root: &Path, staging: &Path) -> Result<()
         &dacvae_archive,
         &dacvae_url,
         "setup.py",
+        DACVAE_REVISION,
     )?;
 
     let server_project = root.join("server").join("pyproject.toml");
@@ -2909,6 +2936,7 @@ fn install_environment_one(
                 &irodori_archive,
                 &irodori_url,
                 "infer.py",
+                IRODORI_TTS_REVISION,
             )?;
             let server_archive = format!("Irodori-TTS-Server-{IRODORI_SERVER_REVISION}");
             let server_url = format!(
@@ -2921,6 +2949,7 @@ fn install_environment_one(
                 &server_archive,
                 &server_url,
                 "pyproject.toml",
+                IRODORI_SERVER_REVISION,
             )?;
             prepare_portable_dependency_sources(&root, &staging)?;
             Ok(InstallResult {
@@ -3306,6 +3335,33 @@ mod tests {
         assert!(!child_alive(), "child process must be stopped together with its parent");
     }
 
+    /// 既存の環境（IRODORI_TEST_ROOT）のソースを、本番と同じ処理で固定バージョンへ更新する。
+    /// 固定バージョンを上げたときに、手元の環境で生成を確かめるために使う（--ignored）。
+    #[test]
+    #[ignore]
+    fn update_sources_of_an_existing_install() {
+        let root = PathBuf::from(env::var("IRODORI_TEST_ROOT").expect("IRODORI_TEST_ROOT"));
+        let staging = root.join("data").join("temp").join("installer");
+        fs::create_dir_all(&staging).unwrap();
+        for (folder, name, url, marker, revision) in [
+            ("irodori", "Irodori-TTS", "https://github.com/Aratako/Irodori-TTS", "infer.py", IRODORI_TTS_REVISION),
+            ("server", "Irodori-TTS-Server", "https://github.com/Aratako/Irodori-TTS-Server", "pyproject.toml", IRODORI_SERVER_REVISION),
+        ] {
+            install_source(
+                &root.join(folder),
+                &root.join(folder),
+                &staging,
+                &format!("{name}-{revision}"),
+                &format!("{url}/archive/{revision}.zip"),
+                marker,
+                revision,
+            )
+            .unwrap();
+        }
+        prepare_portable_dependency_sources(&root, &staging).unwrap();
+        assert!(environment_info(&root).components.iter().find(|c| c.id == "sources").unwrap().installed);
+    }
+
     /// 新しいPCでの初回セットアップと同じ手順でソースを取得・書き換えし、
     /// 同梱したロックで `uv sync --frozen` が通ることを確認する。
     /// ネットワークとアプリ内のuvを使うため通常は実行しない（IRODORI_TEST_UV に uv.exe を指定して --ignored）。
@@ -3323,6 +3379,7 @@ mod tests {
             &format!("Irodori-TTS-{IRODORI_TTS_REVISION}"),
             &format!("https://github.com/Aratako/Irodori-TTS/archive/{IRODORI_TTS_REVISION}.zip"),
             "infer.py",
+            IRODORI_TTS_REVISION,
         )
         .unwrap();
         install_source(
@@ -3332,9 +3389,15 @@ mod tests {
             &format!("Irodori-TTS-Server-{IRODORI_SERVER_REVISION}"),
             &format!("https://github.com/Aratako/Irodori-TTS-Server/archive/{IRODORI_SERVER_REVISION}.zip"),
             "pyproject.toml",
+            IRODORI_SERVER_REVISION,
         )
         .unwrap();
         prepare_portable_dependency_sources(&root, &staging).unwrap();
+        assert!(source_is_current(&root.join("irodori"), "infer.py", IRODORI_TTS_REVISION));
+        // 取得したソースを残して調べたいときは IRODORI_TEST_KEEP にコピー先を指定する
+        if let Ok(keep) = env::var("IRODORI_TEST_KEEP") {
+            copy_dir(&root.join("irodori"), &PathBuf::from(keep)).unwrap();
+        }
         for extra in ["cpu", "cu128"] {
             let output = Command::new(&uv)
                 .args(["sync", "--frozen", "--dry-run", "--project"])
