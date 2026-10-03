@@ -1,6 +1,6 @@
 [package]
 name = "irodori_studio"
-version = "2.0.4"
+version = "2.0.5"
 description = "Portable local voice generation studio for Irodori-TTS"
 authors = ["RICE"]
 license = "MIT"
