@@ -113,9 +113,14 @@ export function ModelSelector({
     null;
   const selectedFamily = visibleFamilies.find((family) => family.id === currentFamily?.id) ?? null;
   const customInstalled = knownModels.includes(config.model) && !currentFamily;
-  const selectedValue = selectedFamily?.id ?? (customInstalled ? "custom" : "");
+  // 検索から追加したモデル。切り替えても選択欄から消えないよう、導入済みのものを全部並べる
+  const customModels = knownModels.filter(
+    (model) => !MODEL_FAMILIES.some((family) => family.normal === model || family.quantized === model),
+  );
+  const selectedValue = selectedFamily?.id ?? (customInstalled ? `model:${config.model}` : "");
 
   function chooseFamily(familyId: string) {
+    if (familyId.startsWith("model:")) return onSelect(familyId.slice("model:".length), "main");
     const family = visibleFamilies.find((item) => item.id === familyId);
     if (!family) return;
     if (knownModels.includes(family.normal)) return onSelect(family.normal, family.normalRevision);
@@ -175,8 +180,16 @@ export function ModelSelector({
                 {family.label}
               </option>
             ))}
-            {customInstalled && <option value="custom">追加モデル</option>}
           </optgroup>
+          {customModels.length > 0 && (
+            <optgroup label="追加したモデル">
+              {customModels.map((model) => (
+                <option value={`model:${model}`} key={model} title={model}>
+                  {shortModelName(model)}
+                </option>
+              ))}
+            </optgroup>
+          )}
         </select>
       </label>
       {currentFamily && (
@@ -214,7 +227,7 @@ export function ModelSelector({
       )}
       {customInstalled && (
         <div className="model-variant-area">
-          <span className="model-variant-label">追加モデル</span>
+          <span className="model-variant-label">追加したモデル</span>
           <small className="model-not-installed">{config.model}</small>
         </div>
       )}
@@ -227,6 +240,13 @@ export function ModelSelector({
       )}
     </div>
   );
+}
+
+/** 「Aratako/Irodori-TTS-v4-Large-Quantized/int8-weight-only」→「v4-Large-Quantized（int8-weight-only）」 */
+export function shortModelName(model: string) {
+  const [, repo = model, variant] = model.split("/");
+  const name = repo.replace(/^Irodori-TTS-/u, "");
+  return variant ? `${name}（${variant}）` : name;
 }
 
 export type SettingsTab = "model" | "server" | "diagnostics" | "app";
@@ -298,30 +318,30 @@ export function SettingsPage({
     }
     setConfig(next);
   }
-  function chooseModel(model: string, revision: string) {
-    const current = config;
-    if (!current || current.model === model) return;
-    const next = { ...current, model, modelRevision: revision };
-    setConfig(next);
-    setBusy(true);
-    void call<TtsConfig>("save_tts_config", { config: next })
-      .then(setConfig)
-      .catch((error) =>
-        onNotice({ kind: "error", title: "モデルの選択を保存できません", body: errorText(error) }),
-      )
-      .finally(() => setBusy(false));
-  }
-  async function saveConfig(nextConfig = config) {
+  /**
+   * 設定を保存する。モデル・精度・機器・サーバーの設定はサーバーの起動時にしか反映されないため、
+   * `restart` が真でサーバーが稼働中なら再起動して、すぐ使えるようにする。
+   */
+  async function saveConfig(nextConfig = config, restart = false) {
     if (!nextConfig) return false;
     setBusy(true);
     try {
       const saved = await call<TtsConfig>("save_tts_config", { config: nextConfig });
       setConfig(saved);
-      onNotice({
-        kind: "success",
-        title: "設定を保存しました",
-        body: "次回のサーバー起動から設定を使用します。",
-      });
+      if (restart && ttsStatus?.running && ttsStatus.ownedByStudio) {
+        setTtsStatus(await call<TtsStatus>("restart_tts"));
+        onNotice({
+          kind: "success",
+          title: "設定を保存してサーバーを再起動しました",
+          body: "新しい設定で生成できます。モデルは最初の生成時に読み込みます。",
+        });
+      } else {
+        onNotice({
+          kind: "success",
+          title: "設定を保存しました",
+          body: restart ? "次にサーバーを起動したときから使用します。" : "次の生成から使用します。",
+        });
+      }
       return true;
     } catch (error) {
       onNotice({ kind: "error", title: "設定を保存できません", body: errorText(error) });
@@ -329,6 +349,11 @@ export function SettingsPage({
     } finally {
       setBusy(false);
     }
+  }
+  function chooseModel(model: string, revision: string) {
+    const current = config;
+    if (!current || current.model === model) return;
+    void saveConfig({ ...current, model, modelRevision: revision }, true);
   }
   async function saveProcessingDevice(nextConfig: TtsConfig) {
     setBusy(true);
@@ -395,12 +420,8 @@ export function SettingsPage({
       const next = { ...config, model, modelRevision: revision };
       setConfig(next);
       setInstalledModels((current) => (current.includes(model) ? current : [...current, model].sort()));
-      await call<TtsConfig>("save_tts_config", { config: next });
-      onNotice({
-        kind: "success",
-        title: "音声モデルを導入しました",
-        body: "このモデルを使って音声を生成できます。",
-      });
+      // 通知は保存・再起動の結果（すぐ使えるか、次の起動からか）をそのまま伝える
+      await saveConfig(next, true);
     } catch (error) {
       onNotice({
         kind: "error",
@@ -620,7 +641,7 @@ export function SettingsPage({
                 {config.modelDevice === "cpu" ? "使用する機器がCPUのため選べません。" : "このPCのGPUは対応していないため選べません。"}
               </p>
             )}
-            <button className="button primary" onClick={() => void saveConfig()} disabled={busy}>
+            <button className="button primary" onClick={() => void saveConfig(config, true)} disabled={busy}>
               設定を保存
             </button>
           </div>
@@ -724,7 +745,7 @@ export function SettingsPage({
                 アプリ起動時にサーバーを自動起動
               </label>
             </div>
-            <button className="button primary" onClick={() => void saveConfig()} disabled={busy}>
+            <button className="button primary" onClick={() => void saveConfig(config, true)} disabled={busy}>
               設定を保存
             </button>
           </div>
