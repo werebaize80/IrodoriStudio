@@ -4,9 +4,12 @@ Windows 10/11 x64向けの、[Irodori-TTS](https://github.com/Aratako/Irodori-TT
 文章から音声を作り、ボイス（声）の登録やお気に入りでの音声管理ができます。音声の生成はすべてこのPCの中で行います。
 
 一応virustotalの結果（ウイルスチェッカーみたいなやつ）
+
 初回セットアップで大量にダウンロードするからだろうけど、インストーラー版（exe）はGeneric ML PUA (PUA)で検出されたけどポータブル（zip）は検出されてないから気になる人はそっち使って（そもそもそっちの方が楽ちん）
+
 ポータブル版
 https://www.virustotal.com/gui/file/528f0f575be6aa380c88a0de6271c7f574af6a4af513ec98da801fd16335e595?nocache=1
+
 インストーラー
 https://www.virustotal.com/gui/file/5c41e66f52452be5d76bb4cbcbdeb97784b9ac5269ce6c5039464163e6a942fb?nocache=1
 
