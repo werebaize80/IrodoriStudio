@@ -1429,7 +1429,7 @@ fn status_for(runtime: &RuntimeState, paths: &PortablePaths, config: &TtsConfig)
                 "利用可能".to_string()
             }
         } else if healthy {
-            "音声モデルの選択待機中".to_string()
+            "利用可能（音声モデルは最初の生成時に読み込みます）".to_string()
         } else if startup_timed_out {
             "サーバーの起動に時間がかかっています。ログを確認してもう一度お試しください".to_string()
         } else if running {
