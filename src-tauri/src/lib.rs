@@ -2894,8 +2894,10 @@ fn install_environment_one(
                 let mut command = uv_command(&root, &uv);
                 command.args([
                     "sync",
-                    // uv.lock のバージョンとハッシュどおりに入れる。ロックとずれていたら作り直さずに止める
-                    "--locked",
+                    // 同梱した uv.lock のバージョンとハッシュをそのまま使う。
+                    // --locked はPCごとの環境差で「ロックが古い」と判定され止まることがあるため、
+                    // ロックを解決し直さない --frozen を使う（ハッシュの検証は行われる）。
+                    "--frozen",
                     "--project",
                     server_project.to_string_lossy().as_ref(),
                     "--extra",
@@ -3131,7 +3133,7 @@ mod tests {
     }
 
     /// 新しいPCでの初回セットアップと同じ手順でソースを取得・書き換えし、
-    /// 同梱したロックで `uv sync --locked` が通ることを確認する。
+    /// 同梱したロックで `uv sync --frozen` が通ることを確認する。
     /// ネットワークとアプリ内のuvを使うため通常は実行しない（IRODORI_TEST_UV に uv.exe を指定して --ignored）。
     #[test]
     #[ignore]
@@ -3161,7 +3163,7 @@ mod tests {
         prepare_portable_dependency_sources(&root, &staging).unwrap();
         for extra in ["cpu", "cu128"] {
             let output = Command::new(&uv)
-                .args(["sync", "--locked", "--dry-run", "--project"])
+                .args(["sync", "--frozen", "--dry-run", "--project"])
                 .arg(root.join("server"))
                 .args(["--extra", extra])
                 .env("UV_PROJECT_ENVIRONMENT", root.join("env"))
