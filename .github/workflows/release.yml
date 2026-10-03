@@ -80,9 +80,11 @@ jobs:
           # zipから取り出したexe単体でも確認できるよう、exeのハッシュも記載する
           Copy-Item src-tauri/target/release/IrodoriStudio.exe "staging/IrodoriStudio.exe"
           $files = @(Get-ChildItem release -File) + @(Get-Item "staging/IrodoriStudio.exe")
-          $files | ForEach-Object {
+          $lines = $files | ForEach-Object {
             "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower())  $($_.Name)"
-          } | Set-Content -Encoding utf8 release/SHA256SUMS.txt
+          }
+          # Linux/macOSの sha256sum -c でもそのまま確認できるよう、改行はLFで書き出す
+          [IO.File]::WriteAllText("$PWD/release/SHA256SUMS.txt", ($lines -join "`n") + "`n")
           Get-Content release/SHA256SUMS.txt
 
       - name: Attest build provenance
