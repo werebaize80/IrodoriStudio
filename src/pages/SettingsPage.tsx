@@ -706,13 +706,6 @@ export function SettingsPage({
                 />
               </label>
               <label className="field-label">
-                ボイス保存場所
-                <input
-                  value={config.voicesDir}
-                  onChange={(event) => update("voicesDir", event.target.value)}
-                />
-              </label>
-              <label className="field-label">
                 ポート番号
                 <input
                   type="number"

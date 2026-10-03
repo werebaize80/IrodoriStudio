@@ -177,13 +177,6 @@ export function NeutralSetupWizard({
             />
             <div className="button-row">
               <button
-                className="button subtle"
-                disabled={Boolean(installing)}
-                onClick={() => void onComplete()}
-              >
-                後で開く
-              </button>
-              <button
                 className="button primary"
                 disabled={Boolean(installing)}
                 onClick={() => void onComplete()}

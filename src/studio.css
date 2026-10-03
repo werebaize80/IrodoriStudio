@@ -1148,3 +1148,12 @@ button.portable-card:hover {
   background: #2b2925;
   opacity: 1;
 }
+
+/* 参考ファイルの行：音符・ファイル名・状態・削除ボタンの4列 */
+.reference-item {
+  grid-template-columns: 22px minmax(0, 1fr) auto 24px;
+}
+
+.reference-item b {
+  font-size: 12px;
+}

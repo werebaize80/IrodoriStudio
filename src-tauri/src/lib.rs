@@ -1109,6 +1109,19 @@ fn default_voice() -> Voice {
     }
 }
 
+/// 以前の「声の特徴（VoiceDesign）」欄は保存されるだけで生成に使われていなかった。
+/// Irodori-TTSで声の雰囲気を決めるのはCaptionなので、声の特徴をCaptionの末尾へまとめる。
+fn merge_voice_design_into_caption(voice: &mut Voice) -> bool {
+    let design = voice.voice_design.trim().to_string();
+    if design.is_empty() {
+        return false;
+    }
+    let caption = voice.caption.trim().trim_end_matches(['、', '。', ',', '.']);
+    voice.caption = if caption.is_empty() { design } else { format!("{caption}、{design}") };
+    voice.voice_design.clear();
+    true
+}
+
 fn load_voices(paths: &PortablePaths) -> Result<Vec<Voice>, String> {
     let voices_dir = PathBuf::from(&paths.voices);
     let path = voices_dir.join("studio-voices.json");
@@ -1118,6 +1131,7 @@ fn load_voices(paths: &PortablePaths) -> Result<Vec<Voice>, String> {
         voices.insert(0, default_voice());
     }
     for voice in &mut voices {
+        changed |= merge_voice_design_into_caption(voice);
         if let Some(icon_path) = voice.icon_path.clone() {
             if let Some(relative) = normalize_voice_file_reference(&icon_path, &voices_dir) {
                 if voice.icon_path.as_deref() != Some(relative.as_str()) {
@@ -1593,7 +1607,8 @@ fn build_server_command(
         command.env_remove("IRODORI_CHECKPOINT");
         command.env("IRODORI_HF_CHECKPOINT", &config.model);
     }
-    command.env("IRODORI_VOICES_DIR", &config.voices_dir);
+    // アプリがボイスを保存する場所（data/voices）と必ず同じ場所をサーバーに渡す
+    command.env("IRODORI_VOICES_DIR", &paths.voices);
     command.env("IRODORI_ALLOW_NO_REF_VOICE", "true");
     command.env("IRODORI_MODEL_DEVICE", &config.model_device);
     command.env("IRODORI_CODEC_DEVICE", &config.codec_device);
@@ -2148,6 +2163,15 @@ async fn generate_speech(
     .map_err(|error| format!("音声生成処理が中断されました: {error}"))?
 }
 
+/// 生成画面のプリセットに応じたステップ数。
+/// 減らすと声が崩れることがあるため、増やす方向（高品質）だけを用意している。
+fn steps_for_preset(configured: u32, preset: &str) -> u32 {
+    match preset {
+        "quality" => (configured.saturating_mul(3) / 2).clamp(configured, 100.max(configured)),
+        _ => configured,
+    }
+}
+
 fn generate_speech_sync(
     text: String,
     voice_id: Option<String>,
@@ -2188,7 +2212,7 @@ fn generate_speech_sync(
     let voice_name = selected
         .map(|voice| voice.name.clone())
         .unwrap_or_else(|| "VoiceDesign（参照なし）".to_string());
-    let payload = json!({ "model": "irodori-tts", "input": input, "voice": effective_voice, "response_format": "wav", "speed": config.speed, "irodori": { "caption": if caption.trim().is_empty() { Value::Null } else { Value::String(caption.clone()) }, "num_steps": config.num_steps, "cfg_scale_text": config.cfg_scale_text, "cfg_scale_speaker": config.cfg_scale_speaker, "seed": config.seed, "t_schedule_mode": config.schedule, "sway_coeff": config.sway_coefficient, "duration_scale": duration_scale_for_model(&config.model), "chunking_enabled": false, "no_ref": selected.map(|voice| voice.references.is_empty()).unwrap_or(true) } });
+    let payload = json!({ "model": "irodori-tts", "input": input, "voice": effective_voice, "response_format": "wav", "speed": config.speed, "irodori": { "caption": if caption.trim().is_empty() { Value::Null } else { Value::String(caption.clone()) }, "num_steps": steps_for_preset(config.num_steps, &preset), "cfg_scale_text": config.cfg_scale_text, "cfg_scale_speaker": config.cfg_scale_speaker, "seed": config.seed, "t_schedule_mode": config.schedule, "sway_coeff": config.sway_coefficient, "duration_scale": duration_scale_for_model(&config.model), "chunking_enabled": false, "no_ref": selected.map(|voice| voice.references.is_empty()).unwrap_or(true) } });
     let client = Client::builder()
         .timeout(Duration::from_secs(900))
         .build()
@@ -3139,6 +3163,77 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 古いバージョンの data フォルダ（voices / favorites / history）をそのまま読めることを確認する。
+    /// 実データのコピーを使うため通常は実行しない（IRODORI_TEST_DATA にコピー先を指定して --ignored）。
+    #[test]
+    #[ignore]
+    fn old_data_folders_can_be_carried_over() {
+        let data = PathBuf::from(env::var("IRODORI_TEST_DATA").expect("IRODORI_TEST_DATA"));
+        let text = |path: PathBuf| path.to_string_lossy().into_owned();
+        let paths = PortablePaths {
+            root: text(data.parent().unwrap().to_path_buf()),
+            data: text(data.clone()),
+            voices: text(data.join("voices")),
+            favorites: text(data.join("favorites")),
+            history: text(data.join("history")),
+            temp: text(data.join("temp")),
+            models: text(data.join("models")),
+            logs: text(data.join("logs")),
+        };
+        let voices = load_voices(&paths).unwrap();
+        for voice in &voices {
+            let missing = voice
+                .references
+                .iter()
+                .filter(|reference| resolve_voice_file(reference, Path::new(&paths.voices)).is_none())
+                .count();
+            println!("ボイス: {} | 参照音声 {}件（見つからない {}件） | Caption: {}", voice.name, voice.references.len(), missing, voice.caption);
+            assert_eq!(missing, 0, "{} の参照音声が見つからない", voice.name);
+            assert!(voice.voice_design.is_empty());
+        }
+        let favorites = load_generations(&paths)
+            .unwrap()
+            .into_iter()
+            .filter(|generation| generation.is_favorite)
+            .collect::<Vec<_>>();
+        let playable = favorites.iter().filter(|item| Path::new(&item.audio_path).is_file()).count();
+        println!("お気に入り: {}件（音声ファイルあり {}件）", favorites.len(), playable);
+        assert_eq!(playable, favorites.len());
+    }
+
+    #[test]
+    fn voice_design_is_appended_to_the_caption() {
+        let mut voice = default_voice();
+        voice.caption.clear();
+        voice.voice_design = "落ち着いた低い声".to_string();
+        assert!(merge_voice_design_into_caption(&mut voice));
+        assert_eq!(voice.caption, "落ち着いた低い声");
+        assert!(voice.voice_design.is_empty());
+
+        let mut voice = default_voice();
+        voice.caption = "明るい声".to_string();
+        voice.voice_design = "低い声".to_string();
+        assert!(merge_voice_design_into_caption(&mut voice));
+        assert_eq!(voice.caption, "明るい声、低い声", "入力済みのCaptionの末尾へつなげる");
+        assert!(voice.voice_design.is_empty());
+        assert!(!merge_voice_design_into_caption(&mut voice), "2回目は何もしない");
+
+        let mut voice = default_voice();
+        voice.caption = "息を含んで、ゆっくり囁くような声。".to_string();
+        voice.voice_design = "ダウナーな声".to_string();
+        merge_voice_design_into_caption(&mut voice);
+        assert_eq!(voice.caption, "息を含んで、ゆっくり囁くような声、ダウナーな声");
+    }
+
+    #[test]
+    fn quality_preset_raises_steps_with_a_cap() {
+        assert_eq!(steps_for_preset(32, "standard"), 32);
+        assert_eq!(steps_for_preset(32, "quality"), 48);
+        assert_eq!(steps_for_preset(80, "quality"), 100);
+        assert_eq!(steps_for_preset(120, "quality"), 120, "設定値より減らさない");
+        assert_eq!(steps_for_preset(40, "vram"), 40, "古いプリセット名は標準扱い");
+    }
 
     #[test]
     fn unsupported_precisions_fall_back_to_fp32() {

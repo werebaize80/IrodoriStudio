@@ -198,7 +198,6 @@ textarea:focus, input:focus, select:focus { border-color: var(--accent); box-sha
 .reference-item b { overflow: hidden; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .reference-item small { color: var(--muted); font-size: 9px; }
 .reference-item button { background: transparent; color: #b9b3a6; font-size: 15px; }
-.drag-handle { color: var(--dim); }
 .muted { color: var(--dim); font-size: 10px; }
 .reference-summary { margin-top: 13px; color: var(--dim); font: 9px "IBM Plex Mono", monospace; }
 .editor-actions { display: flex; justify-content: flex-end; gap: 9px; margin-top: 23px; }

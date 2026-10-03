@@ -83,11 +83,13 @@ export const MODEL_FAMILIES: ModelFamily[] = [
   },
 ];
 export const PRESETS = [
-  { id: "standard", label: "標準", note: "速度と品質のバランス", detail: "通常のGPU利用を想定" },
-  { id: "quality", label: "高品質", note: "品質優先", detail: "時間とVRAMが増える可能性" },
-  { id: "vram", label: "VRAM節約", note: "メモリ使用量を抑える", detail: "GPUメモリが少ない環境向け" },
-  { id: "cpu", label: "グラボ無し", note: "CPUのみで生成", detail: "生成に数十秒以上かかる場合あり" },
-  { id: "custom", label: "カスタム", note: "詳細設定を使用", detail: "設定画面の値を反映" },
+  { id: "standard", label: "標準", note: "設定どおり", detail: "設定画面の「生成ステップ数」で生成します" },
+  {
+    id: "quality",
+    label: "高品質",
+    note: "ステップ数1.5倍",
+    detail: "生成ステップ数を1.5倍（最大100）にして丁寧に生成します。時間も約1.5倍かかります",
+  },
 ];
 export const INSTALL_ORDER = ["runtime", "python", "sources", "dependencies", "model", "ffmpeg"] as const;
 export const INSTALL_LABELS: Record<string, string> = {

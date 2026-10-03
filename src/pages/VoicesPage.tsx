@@ -328,24 +328,14 @@ export function FriendlyVoiceEditorForm({
             {iconFile && <span className="icon-file-name">{iconFile.name}</span>}
           </div>
         </div>
-        <div className="editor-two">
-          <label className="field-label">
-            声の特徴（VoiceDesign）
-            <textarea
-              value={draft.voiceDesign}
-              onChange={(event) => update("voiceDesign", event.target.value)}
-              placeholder="例：落ち着いた、明るい声"
-            />
-          </label>
-          <label className="field-label">
-            話し方の説明（Caption）
-            <textarea
-              value={draft.caption}
-              onChange={(event) => update("caption", event.target.value)}
-              placeholder="例：ゆっくり、自然な話し方"
-            />
-          </label>
-        </div>
+        <label className="field-label">
+          声と話し方の説明（Caption）
+          <textarea
+            value={draft.caption}
+            onChange={(event) => update("caption", event.target.value)}
+            placeholder="例：落ち着いた低めの女性の声で、ゆっくり自然に話す"
+          />
+        </label>
         <div className="reference-box">
           <div className="card-heading">
             <div>
@@ -366,7 +356,6 @@ export function FriendlyVoiceEditorForm({
           <div className="reference-list">
             {draft.references.map((reference, index) => (
               <div className="reference-item" key={reference}>
-                <span className="drag-handle">⠿</span>
                 <span>♫</span>
                 <b>{reference.split(/[\\/]/u).pop()}</b>
                 <small>保存済み</small>
@@ -385,7 +374,6 @@ export function FriendlyVoiceEditorForm({
             ))}
             {files.map((file, index) => (
               <div className="reference-item new" key={`${file.name}-${index}`}>
-                <span className="drag-handle">⠿</span>
                 <span>♫</span>
                 <b>{file.name}</b>
                 <small>保存時に追加</small>
@@ -399,7 +387,7 @@ export function FriendlyVoiceEditorForm({
             ))}
             {!draft.references.length && !files.length && (
               <small className="muted">
-                参照音声を使用しない場合は、声の特徴と話し方の説明を入力してください。
+                参照音声を使用しない場合は、「声と話し方の説明」に声の雰囲気を入力してください。
               </small>
             )}
           </div>
