@@ -7,7 +7,7 @@ Windows 10/11 x64向けの、[Irodori-TTS](https://github.com/Aratako/Irodori-TT
 
 ポータブル版（zip）
 
-https://www.virustotal.com/gui/file/6c578d79ebb400e7f640ec5b92d7cf6d11b49f62bb7fc6adf3b9ced719322547?nocache=1
+[https://www.virustotal.com/gui/file/6c578d79ebb400e7f640ec5b92d7cf6d11b49f62bb7fc6adf3b9ced719322547?nocache=1](https://www.virustotal.com/gui/file/9e30b575e6b58264e5a3e45c2033cb1b2350a1cfca7cc1db9e2ebf09a38aeb7d?nocache=1)
 
 ## 安心して使っていただくために
 
